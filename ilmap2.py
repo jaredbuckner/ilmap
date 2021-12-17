@@ -84,8 +84,8 @@ class _IlMap_ut(unittest.TestCase):
     def test_randscatter(self):
         width = 2000
         height = 2000
-        dist = 15
-        separate = 15
+        dist = 7
+        separate = 25
         distsq = dist * dist
 
         points = list()
@@ -111,10 +111,13 @@ class _IlMap_ut(unittest.TestCase):
         for value in depth.values():
             histo.setdefault(value, 0)
             histo[value] += 1
-
-        for key, value in sorted(histo.items()):
-            print(f"DEPTH {key:2d}: {value}")
         
+        histosort = sorted(histo.items());
+        if(0):
+            for key, value in sorted(histo.items()):
+                print(f"DEPTH {key:2d}: {value}")
+
+        print(f'Depth:  [{histosort[-1][0]}:{histosort[0][0]}]')
         
         view = PIL.Image.new('RGB', (math.ceil(width),
                                      math.ceil(height)))
@@ -135,11 +138,13 @@ class _IlMap_ut(unittest.TestCase):
                     color = (128, 192, 255)
                 elif(depth[aIdx] >= 0 and depth[bIdx] >= 0):
                     color = (96, 128, 255)
-                elif(depth[aIdx] >= -(separate // 4) and depth[bIdx] >= -(separate // 4)):
+                elif(depth[aIdx] >= (histosort[0][0] // 5) and depth[bIdx] >= (histosort[0][0] // 5)):
+                    color = (192 * 3//4, 255 * 3 //4 , 128 * 3 // 4)
+                elif(depth[aIdx] >= (histosort[0][0] * 2 // 5) and depth[bIdx] >= (histosort[0][0] * 2 // 5)):
                     color = (192//2, 255//2, 128//2)
-                elif(depth[aIdx] >= -((separate * 2) // 4) and depth[bIdx] >= -((separate * 2) // 4)):
+                elif(depth[aIdx] >= (histosort[0][0] * 3 // 5) and depth[bIdx] >= (histosort[0][0] * 3 // 5)):
                     color = (255//2, 192//2, 128//2)
-                elif(depth[aIdx] >= -((separate * 3) // 4) and depth[bIdx] >= -((separate * 3) // 4)):
+                elif(depth[aIdx] >= (histosort[0][0] * 4 // 5) and depth[bIdx] >= (histosort[0][0] * 4 // 5)):
                     color = (255 * 3//4, 192*3//4, 128*3//4)
                 else:
                     #(224*3//4, 224*3//4, 128*3//4)
