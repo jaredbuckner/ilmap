@@ -66,14 +66,26 @@ def waterize(tri, dist=1):
             if(qIdx is None):
                 break
             pass
-            
+
+    namingishard = 0
+    while(True):
+        level = extend_region(tri, downto.keys(), 1);
+        if(not level):
+            break
+        for lIdx, paths in level.items():
+            path = random.choice(paths)
+            downto[lIdx] = path[0]
+            depth[lIdx] = namingishard
+        namingishard -= 1
+    
     return(downto, depth)
 
 class _IlMap_ut(unittest.TestCase):
     def test_randscatter(self):
         width = 2000
         height = 2000
-        dist = 9
+        dist = 15
+        separate = 15
         distsq = dist * dist
 
         points = list()
@@ -93,7 +105,7 @@ class _IlMap_ut(unittest.TestCase):
         
         tri = Delaunay(points)
 
-        downto, depth = waterize(tri, 8)
+        downto, depth = waterize(tri, separate)
 
         histo = dict()
         for value in depth.values():
@@ -110,12 +122,29 @@ class _IlMap_ut(unittest.TestCase):
         for simpl in tri.simplices:
             for aIdx, bIdx in ((simpl[0], simpl[1]),
                                (simpl[0], simpl[2]),
-                               (simpl[1], simpl[2])):
-                
-                color = ((128, 192, 255) if((aIdx in downto and downto[aIdx] == bIdx) or
-                                            (bIdx in downto and downto[bIdx] == aIdx) or
-                                            (aIdx in downto and downto[aIdx] == None and bIdx in downto and downto[bIdx] == None)) else
-                         (192//2, 255//2, 128//2))
+                               (simpl[1], simpl[2])):                
+                if(aIdx not in depth or bIdx not in depth):
+                    color = (192, 0, 0)
+                elif((depth[aIdx] <=0 and depth[bIdx] <=0 and abs(depth[aIdx] - depth[bIdx]) > 1)):
+                    color = (255, 0, 255)
+                elif((depth[aIdx] is None and depth[bIdx] is None) or
+                     (depth[aIdx] is None and depth[bIdx] > 0) or
+                     (depth[aIdx] > 0 and depth[bIdx] is None) or
+                     (depth[aIdx] > 0 and depth[bIdx] > 0 and
+                      (downto[aIdx] == bIdx or downto[bIdx] == aIdx))):
+                    color = (128, 192, 255)
+                elif(depth[aIdx] >= 0 and depth[bIdx] >= 0):
+                    color = (96, 128, 255)
+                elif(depth[aIdx] >= -(separate // 4) and depth[bIdx] >= -(separate // 4)):
+                    color = (192//2, 255//2, 128//2)
+                elif(depth[aIdx] >= -((separate * 2) // 4) and depth[bIdx] >= -((separate * 2) // 4)):
+                    color = (255//2, 192//2, 128//2)
+                elif(depth[aIdx] >= -((separate * 3) // 4) and depth[bIdx] >= -((separate * 3) // 4)):
+                    color = (255 * 3//4, 192*3//4, 128*3//4)
+                else:
+                    #(224*3//4, 224*3//4, 128*3//4)
+                    color = (255, 255, 255)
+                    
                 
                 xDiff = points[bIdx][0] - points[aIdx][0]
                 yDiff = points[bIdx][1] - points[aIdx][1]
