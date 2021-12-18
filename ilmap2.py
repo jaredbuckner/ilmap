@@ -113,9 +113,10 @@ def draw_tri(view, tri, downto, depth, undeepest, scale):
             xDiff = tri.points[bIdx][0] - tri.points[aIdx][0]
             yDiff = tri.points[bIdx][1] - tri.points[aIdx][1]
 
-            for part in range(101):
-                xDot = tri.points[aIdx][0] + xDiff * (part / 100)
-                yDot = tri.points[aIdx][1] + yDiff * (part / 100)
+            span = int(math.sqrt(xDiff*xDiff + yDiff*yDiff) * 2 * scale + 1)
+            for part in range(span + 1):
+                xDot = tri.points[aIdx][0] + xDiff * (part / span)
+                yDot = tri.points[aIdx][1] + yDiff * (part / span)
                 view.putpixel((int(xDot * scale), int(yDot * scale)), color)
                 pass
             pass
@@ -125,10 +126,49 @@ def draw_tri(view, tri, downto, depth, undeepest, scale):
         view.putpixel((int(point[0] * scale), int(point[1] * scale)), (255,255,255))
         pass
 
-def draw_elev(view, tri, elev, scale):
-    for x in range(view.width):
-        for y in range(view.height):
+def draw_elev(view, tri, height, scale):
+    def ecolor(idx):
+        return((255,  0,255) if idx not in height else
+               (  0,  0,255) if height[idx] < -10 else
+               (  0,128,255) if height[idx] < 0 else
+               (192,192, 96) if height[idx] < 5 else
+               ( 64,224, 64) if height[idx] < 100 else
+               (128,256,128) if height[idx] < 250 else
+               (192,192,128) if height[idx] < 500 else
+               (224,128, 64) if height[idx] < 750 else
+               (256,256,256) if height[idx] < 984 else
+               (256,  0,  0))
+    
+    for simpl in tri.simplices:
+        for aIdx, bIdx in ((simpl[0], simpl[1]),
+                           (simpl[0], simpl[2]),
+                           (simpl[1], simpl[2])):
+            aRed, aGreen, aBlue = ecolor(aIdx)
+            bRed, bGreen, bBlue = ecolor(bIdx)
+            xDiff = tri.points[bIdx][0] - tri.points[aIdx][0]
+            yDiff = tri.points[bIdx][1] - tri.points[aIdx][1]
+            redDiff = bRed - aRed
+            greenDiff = bGreen - aGreen
+            blueDiff = bBlue - aBlue
             
+            span = int(math.sqrt(xDiff*xDiff + yDiff*yDiff) * 2 * scale + 1)
+            for part in range(span+1):
+                xDot = tri.points[aIdx][0] + xDiff * (part / span)
+                yDot = tri.points[aIdx][1] + yDiff * (part / span)
+                pcolor = (int(aRed + redDiff * (part / span)),
+                          int(aGreen + greenDiff * (part / span)),
+                          int(aBlue + blueDiff * (part / span)))
+                
+                view.putpixel((int(xDot * scale), int(yDot * scale)), pcolor)
+                pass
+            pass
+        pass
+
+    for point in tri.points:
+        view.putpixel((int(point[0] * scale), int(point[1] * scale)), (255,255,255))
+        pass
+
+
     
 def tri_dist(tri, aIdx, bIdx):
     adelt = tri.points[aIdx][0] - tri.points[bIdx][0]
@@ -197,10 +237,11 @@ def limitations(aIdx, bIdx, *, tri, downto, depth, height, gradefn, rimHeight=3,
     ## Otherwise, no restrictions
     return(None, None, None)
 
-def oneraise(tri, downto, depth, height, gradefn):
-    allIdx = list(height.keys())
+def oneraise(tri, downto, depth, height, gradefn, moveIndices, countsAsMove=0.1):
+    allIdx = list(moveIndices)
     random.shuffle(allIdx);
-    newheight = dict()
+    newheight = dict(height)
+    updates = set()
     nindptr, nindices = tri.vertex_neighbor_vertices
     violations = 0
 
@@ -224,7 +265,7 @@ def oneraise(tri, downto, depth, height, gradefn):
 
         if((not desired) or
            (minH is not None and maxH is not None and minH > maxH)):
-            newheight[aIdx] = (minH + maxH / 2)
+            hooboy = (minH + maxH) / 2
             violations += 1
         else:
             hooboy = sum(desired) / len(desired)
@@ -233,12 +274,12 @@ def oneraise(tri, downto, depth, height, gradefn):
             if(maxH is not None and maxH < hooboy):
                 hooboy = maxH
 
-            newheight[aIdx] = hooboy
-        pass
+        newheight[aIdx] = hooboy * .95 + height[aIdx] * 0.05
+        if(abs(newheight[aIdx] - height[aIdx]) > countsAsMove):
+            updates.add(aIdx)
+    
 
-    return(newheight, violations)
-            
-            
+    return(newheight, violations, updates)
                 
 
 class _IlMap_ut(unittest.TestCase):
@@ -247,7 +288,7 @@ class _IlMap_ut(unittest.TestCase):
         height = 36000
         scale = 1/20
         dist = 16.666 * 7
-        separate = 1500 / dist  ## about 1.5km apart
+        separate = 1900 / dist  ## about 1.9km apart
         distsq = dist * dist
 
         points = list()
@@ -305,13 +346,28 @@ class _IlMap_ut(unittest.TestCase):
         draw_tri(view, tri, downto, depth, leastdepth, scale)
         view.show()
 
+        viewH = PIL.Image.new('RGB', (math.ceil(width * scale),
+                                      math.ceil(height * scale)))
         height = dict( (idx, 0) for idx in depth.keys())
 
-        for idx in range(1000):
-            height, violations = oneraise(tri, downto, depth, height, gradefn)
+        updates = set(height.keys())
+        repeats = 10000
+        for idx in range(repeats):
+            height, violations, updates = oneraise(tri, downto, depth, height, gradefn, updates)
             allheights = sorted(height.values())
-            print(f"HEIGHT:  [{allheights[0]}:{allheights[-1]}] with {violations} violations")
-        
+            print(f"HEIGHT:  [{allheights[0]}:{allheights[-1]}] updated {len(updates)} with {violations} violations")
+
+            if(len(updates) == 0 or idx % 200 == 199):
+                draw_elev(viewH, tri, height, scale)
+                viewH.show()
+                pass
+
+            if(len(updates) == 0):
+                break
+            
+            updates.update(extend_region(tri, updates).keys())
+            updates.update(extend_region(tri, updates).keys())
+            
         pass
     
             
