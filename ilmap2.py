@@ -164,9 +164,9 @@ def draw_elev(view, tri, height, scale):
             pass
         pass
 
-    for point in tri.points:
-        view.putpixel((int(point[0] * scale), int(point[1] * scale)), (255,255,255))
-        pass
+    #for point in tri.points:
+    #    view.putpixel((int(point[0] * scale), int(point[1] * scale)), (255,255,255))
+    #    pass
 
 
     
@@ -348,7 +348,7 @@ class _IlMap_ut(unittest.TestCase):
 
         viewH = PIL.Image.new('RGB', (math.ceil(width * scale),
                                       math.ceil(height * scale)))
-        height = dict( (idx, 0) for idx in depth.keys())
+        height = dict( (idx, -40) for idx in depth.keys())
 
         updates = set(height.keys())
         repeats = 10000
