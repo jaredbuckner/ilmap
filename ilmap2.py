@@ -173,13 +173,36 @@ def draw_elev(view, tri, height, scale):
     #    view.putpixel((int(point[0] * scale), int(point[1] * scale)), (255,255,255))
     #    pass
 
-
+def draw_heightmap(view, tri, height, scale):
+    for x in range(1081):
+        triX = x * scale
+        for y in range(1081):
+            triY = y * scale
+            smplx = tri.find_simplex(((triX, triY),))
+            if(smplx[0] == -1):
+                color = 0
+            else:
+                aH, bH, cH = (height[idx] for idx in tri.simplices[smplx[0]])
+                aP, bP, cP = (tri.points[idx] for idx in tri.simplices[smplx[0]])
+                det = (bP[1]-cP[1])*(aP[0]-cP[0])+(cP[0]-bP[0])*(aP[1]-cP[1])
+                aW = ((bP[1]-cP[1])*(triX-cP[0]) + (cP[0]-bP[0])*(triY-cP[1]))/det
+                bW = ((cP[1]-aP[1])*(triX-cP[0]) + (aP[0]-cP[0])*(triY-cP[1]))/det
+                cW = 1 - aW - bW
+                triH = aH * aW + bH * bW + cH * cW
+                color = int((triH + 40) / 1024 * 65536)
+                if color < 0: color = 0
+                if color > 65535: color = 65535
+                view.putpixel((x, y), color)
+                
+def pdist(a, b):
+    xdelt = a[0] - b[0]
+    ydelt = b[1] - b[1]
+    return(math.sqrt(xdelt * xdelt + ydelt * ydelt))
     
 def tri_dist(tri, aIdx, bIdx):
-    adelt = tri.points[aIdx][0] - tri.points[bIdx][0]
-    bdelt = tri.points[aIdx][1] - tri.points[bIdx][1]
-    return(math.sqrt(adelt * adelt + bdelt * bdelt))
+    return(pdist(tri.points[aIdx], tri.points[bIdx]))
 
+               
 ## Limits on aIdx height based on the edge to bIdx, returned as (hardmin, desired, hardmax)
 def limitations(aIdx, bIdx, *, tri, downto, depth, height, gradefn, rimHeight=3, minHeight=-40):
     ## a is on the outer edge
@@ -285,8 +308,28 @@ def oneraise(tri, downto, depth, height, gradefn, moveIndices, countsAsMove=0.1)
         if(abs(newheight[aIdx] - height[aIdx]) > countsAsMove):
             updates.add(aIdx)
     
-
     return(newheight, violations, updates)
+
+def fix_viols(tri, downto, height):
+    allIdx = set(downto.keys());
+    anyMove = set();
+    while(allIdx):
+        nextIdx = set()
+        for aIdx in allIdx:
+            bIdx = downto[aIdx]
+            if bIdx == None:
+                continue
+            if height[aIdx] < height[bIdx]:
+                delta = height[bIdx] - height[aIdx]
+                height[aIdx] += delta / 2 + 0.005
+                height[bIdx] -= delta / 2 + 0.005
+                assert(height[aIdx] > height[bIdx])
+                nextIdx.update(extend_region(tri, (aIdx,)).keys())
+                anyMove.add(aIdx)
+                anyMove.add(bIdx)
+        allIdx = nextIdx
+        
+    return anyMove
 
 def river_report(tri, idx, downto, depth, height):
     rlen = 0
@@ -312,10 +355,10 @@ def river_report(tri, idx, downto, depth, height):
 
 class _IlMap_ut(unittest.TestCase):
     def test_randscatter(self):
-        width = 36000
-        height = 36000
-        scale = 1/20
-        dist = 16.666 * 7 
+        width = 18000
+        height = 18000
+        scale = 1/10
+        dist = 16.666 * 4
         separate = 1900 / dist  ## about 1.9km apart
         distsq = dist * dist
 
@@ -376,12 +419,15 @@ class _IlMap_ut(unittest.TestCase):
 
         viewH = PIL.Image.new('RGB', (math.ceil(width * scale),
                                       math.ceil(height * scale)))
+        viewHM = PIL.Image.new('I;16', (1081, 1081));
         height = dict( (idx, -5) for idx in depth.keys())
 
         updates = set(height.keys())
         repeats = 100000
         for idx in range(repeats):
             height, violations, updates = oneraise(tri, downto, depth, height, gradefn, updates)
+            if(idx % 7 == 0 and idx % 13 == 0 and idx % (7*13) != 0):
+                updates.update(fix_viols(tri, downto, height))
             allheights = sorted(height.values())
             print(f"HEIGHT:  [{allheights[0]}:{allheights[-1]}] updated {len(updates)} with {violations} violations")
 
@@ -389,9 +435,13 @@ class _IlMap_ut(unittest.TestCase):
                 for rIdx, rDep in depth.items():
                     if(rDep == 1):
                         river_report(tri, rIdx, downto, depth, height)
-                    
-                draw_elev(viewH, tri, height, scale)
+
+                tempHeight = dict(height)
+                fix_viols(tri, downto, tempHeight)
+                draw_elev(viewH, tri, tempHeight, scale)
                 viewH.show()
+                draw_heightmap(viewHM, tri, tempHeight, 18000 / 1081)
+                viewHM.show()
                 pass
 
             if(len(updates) == 0):
