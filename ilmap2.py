@@ -129,13 +129,18 @@ def draw_tri(view, tri, downto, depth, undeepest, scale):
 def draw_elev(view, tri, height, scale):
     def ecolor(idx):
         return((255,  0,255) if idx not in height else
-               (  0,  0,255) if height[idx] < -10 else
-               (  0,128,255) if height[idx] < 0 else
-               (192,192, 96) if height[idx] < 5 else
-               ( 64,224, 64) if height[idx] < 100 else
-               (128,256,128) if height[idx] < 250 else
-               (192,192,128) if height[idx] < 500 else
-               (224,128, 64) if height[idx] < 750 else
+               (  0,  0,255) if height[idx] < -20 else
+               (  0,128,255) if height[idx] < -10 else
+               (  96,192,192) if height[idx] < 0 else
+               (192,192, 96) if height[idx] < 10 else
+               (128,256,128) if height[idx] < 100 else
+               ( 64,224, 64) if height[idx] < 200 else
+               (192,225,128) if height[idx] < 300 else
+               (192,192, 64) if height[idx] < 400 else
+               (224,128, 64) if height[idx] < 500 else
+               (128, 64, 32) if height[idx] < 600 else
+               (224, 64,  0) if height[idx] < 700 else
+               (224,192, 192) if height[idx] < 800 else
                (256,256,256) if height[idx] < 984 else
                (256,  0,  0))
     
@@ -185,54 +190,56 @@ def limitations(aIdx, bIdx, *, tri, downto, depth, height, gradefn, rimHeight=3,
     if(depth[aIdx] > 0 and depth[bIdx] > 0):
         ## a flows into b
         if(downto[aIdx] == bIdx):
-            return(height[bIdx],
-                   height[bIdx] + tri_dist(tri, aIdx, bIdx) * gradefn(depth[aIdx]),
-                   None)
+            nomgrade = tri_dist(tri, aIdx, bIdx) * gradefn(depth[aIdx])
+            return(height[bIdx] + nomgrade / 2,
+                   height[bIdx] + nomgrade,
+                   height[bIdx] + nomgrade * 2)
 
         ## b flows into a
         if(depth[bIdx] > 0 and downto[bIdx] == aIdx):
-            return(None,
-                   height[bIdx] - tri_dist(tri, aIdx, bIdx) * gradefn(depth[bIdx]),
-                   height[bIdx])
+            nomgrade = tri_dist(tri, aIdx, bIdx) * gradefn(depth[bIdx])
+            return(height[bIdx] - nomgrade * 2,
+                   height[bIdx] - nomgrade,
+                   height[bIdx] - nomgrade / 2)
 
         ## neither flow into the other
         return(None, None, None)
     
     ## a is a shore and a flows into b
     if(depth[aIdx] == 0 and downto[aIdx] == bIdx):
-        return(height[bIdx],
+        return(height[bIdx] + tri_dist(tri, aIdx, bIdx) * 0.001,
                height[bIdx] + tri_dist(tri, aIdx, bIdx) * gradefn(depth[bIdx]),
-               None)
+               height[bIdx] + tri_dist(tri, aIdx, bIdx) * 0.60)
     ## b is a shore and b flows into a
     if(depth[bIdx] == 0 and downto[bIdx] == aIdx):
-        return(None,
+        return(height[bIdx] - tri_dist(tri, aIdx, bIdx) * 0.60,
                height[bIdx] - tri_dist(tri, aIdx, bIdx) * gradefn(depth[aIdx]),
-               height[bIdx])
+               height[bIdx] - tri_dist(tri, aIdx, bIdx) * 0.001)
 
     ## a is a rim and a flows into b
     if(depth[aIdx] == -1 and downto[aIdx] == bIdx and downto[bIdx] is not None):
-        return(height[bIdx],
-               max(height[bIdx] + tri_dist(tri, aIdx, bIdx) * gradefn(depth[aIdx]),
-                   height[downto[bIdx]] + rimHeight),
+        return(max(height[downto[bIdx]] + rimHeight,
+                   height[bIdx] + tri_dist(tri, aIdx, bIdx) * 0.001),
+               height[bIdx] + tri_dist(tri, aIdx, bIdx) * gradefn(depth[aIdx]),
                None)
 
     ## b is a rim and b flows into a
     if(depth[bIdx] == -1 and downto[bIdx] == aIdx and downto[aIdx] is not None):
         return(None,
-               None,  ## Note:  This is independent because be can be set independently of a
-               height[bIdx])
+               None,  ## Note:  This is independent because b can be set independently of a
+               height[bIdx] - tri_dist(tri, aIdx, bIdx) * 0.001)
 
     ## a is above b
     if(depth[aIdx] < depth[bIdx]):
-        return(height[bIdx],
+        return(height[bIdx] + tri_dist(tri, aIdx, bIdx) * 0.001,
                height[bIdx] + tri_dist(tri, aIdx, bIdx) * gradefn(depth[aIdx]),
-               None)
+               height[bIdx] + tri_dist(tri, aIdx, bIdx) * 1.50)
 
     ## b is above a
     if(depth[aIdx] > depth[bIdx]):
-        return(None,
+        return(height[bIdx] - tri_dist(tri, aIdx, bIdx) * 1.50,
                height[bIdx] - tri_dist(tri, aIdx, bIdx) * gradefn(depth[bIdx]),
-               height[bIdx])
+               height[bIdx] - tri_dist(tri, aIdx, bIdx) * 0.001)
 
     ## Otherwise, no restrictions
     return(None, None, None)
@@ -280,14 +287,35 @@ def oneraise(tri, downto, depth, height, gradefn, moveIndices, countsAsMove=0.1)
     
 
     return(newheight, violations, updates)
-                
+
+def river_report(tri, idx, downto, depth, height):
+    rlen = 0
+    rfall = 0
+    lastIdx = None
+    while(True):
+        if(lastIdx is not None):
+            seglen = tri_dist(tri, lastIdx, idx)
+            segfall = height[lastIdx] - height[idx]
+            #print(f'  (falls {segfall}m along a {seglen}m run (slope: {segfall/seglen}))')
+            rlen += seglen
+            rfall += segfall
+
+        #print(f'I({idx} H({height[idx]}) D({depth[idx]})')
+        lastIdx, idx = idx, downto[idx]
+        if(idx is None):
+            break
+    if(rlen != 0):
+        print(f'=== TOTAL FALL: {rfall}m along a {rlen} run (slope: {rfall/rlen}) ===')
+    else:
+        print("=== SINGULAR ===")
+
 
 class _IlMap_ut(unittest.TestCase):
     def test_randscatter(self):
         width = 36000
         height = 36000
         scale = 1/20
-        dist = 16.666 * 7
+        dist = 16.666 * 7 
         separate = 1900 / dist  ## about 1.9km apart
         distsq = dist * dist
 
@@ -348,16 +376,20 @@ class _IlMap_ut(unittest.TestCase):
 
         viewH = PIL.Image.new('RGB', (math.ceil(width * scale),
                                       math.ceil(height * scale)))
-        height = dict( (idx, -40) for idx in depth.keys())
+        height = dict( (idx, -5) for idx in depth.keys())
 
         updates = set(height.keys())
-        repeats = 10000
+        repeats = 100000
         for idx in range(repeats):
             height, violations, updates = oneraise(tri, downto, depth, height, gradefn, updates)
             allheights = sorted(height.values())
             print(f"HEIGHT:  [{allheights[0]}:{allheights[-1]}] updated {len(updates)} with {violations} violations")
 
             if(len(updates) == 0 or idx % 200 == 199):
+                for rIdx, rDep in depth.items():
+                    if(rDep == 1):
+                        river_report(tri, rIdx, downto, depth, height)
+                    
                 draw_elev(viewH, tri, height, scale)
                 viewH.show()
                 pass
