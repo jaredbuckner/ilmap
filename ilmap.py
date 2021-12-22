@@ -286,7 +286,7 @@ class IlMapper:
         ## maps are only a million nodes or so, this is reasonable.
 
         ## This gives the number of nodes involved in a river
-        riverlines = len([v for v in self._depth if v > 0])
+        riverlines = sum(1 for v in self._depth.values() if v is not None and v > 0)
 
         flowsize = dict()
         flowdown = dict()
