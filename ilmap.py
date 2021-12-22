@@ -457,6 +457,7 @@ if __name__ == '__main__':
     parser.add_argument('--riverseparation', type=float, metavar='meters', default=900)
     parser.add_argument('--rivermouths', type=int, metavar='mouths')
     parser.add_argument('--riverslopes', type=float, nargs='+', default=(0.01, 0.015,0.02, 0.03, 0.04))
+    parser.add_argument('--riverdepth', type=float, metavar='meters', default=6)
     parser.add_argument('--landslopes', type=float, nargs='+', default=(0.05, 0.09, 0.15, 0.30, 0.75))
     parser.add_argument('--showshore', action='store_true')
     parser.add_argument('--showrivers', action='store_true')
@@ -545,7 +546,7 @@ if __name__ == '__main__':
     mapper.force_one_tile_shore(view2elev)
     print("Shoreline encouraged")
     
-    mapper.punch_rivers()
+    mapper.punch_rivers(d=args.riverdepth, src_d=args.riverdepth/2)
     
     print("Rivers punched")
     
