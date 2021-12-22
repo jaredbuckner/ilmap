@@ -440,91 +440,122 @@ class IlMapper:
             return(_ecolor(aIdx), _ecolor(bIdx))
 
         return _colorfn
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description='Triangulation Map Generator');
+
+    parser.add_argument('--mapwidth', type=float, metavar='meters', default=18000)
+    parser.add_argument('--mapheight', type=float, metavar='meters', default=18000)
+    parser.add_argument('--viewwidth', type=int, metavar='pixels', default=1024)
+    parser.add_argument('--viewheight', type=int, metavar='pixels', default=1024)
+    parser.add_argument('--elevwidth', type=int, metavar='pixels', default=1081)
+    parser.add_argument('--elevheight', type=int, metavar='pixels', default=1081)
+    parser.add_argument('--nodeseparation', type=float, metavar='meters', default=50)
+    parser.add_argument('--riverseparation', type=float, metavar='meters', default=900)
+    parser.add_argument('--rivermouths', type=int, metavar='mouths')
+    parser.add_argument('--riverslopes', type=float, nargs='+', default=(0.01, 0.015,0.02, 0.03, 0.04))
+    parser.add_argument('--landslopes', type=float, nargs='+', default=(0.05, 0.09, 0.15, 0.30, 0.75))
+    parser.add_argument('--showshore', action='store_true')
+    parser.add_argument('--showrivers', action='store_true')
+    parser.add_argument('--showdownto', action='store_true')
+    parser.add_argument('--showplan', action='store_true')
+    parser.add_argument('--showheight', action='store_true')
+
+    args = parser.parse_args()
+
+    grid2viewscale = (args.viewwidth / args.mapwidth,
+                      args.viewheight / args.mapheight)
+    def grid2view(point):
+        return(point[0] * grid2viewscale[0],
+               point[1] * grid2viewscale[1])
+
+    elev2gridscale = (args.mapwidth / args.elevwidth,
+                      args.mapheight / args.elevheight)
+    def view2elev(point):
+        return(point[0] * elev2gridscale[0],
+               point[1] * elev2gridscale[1])
+
+    # dist is now args.nodeseparation
+    # separate is math.ceil(args.riverseparation / args.nodeseparation) ???
     
+    viewXY = (args.viewwidth, args.viewheight)
 
-class _IlMapper_ut(unittest.TestCase):
-    def test_randscatter(self):
-        width = 18000
-        height = 18000
-        scale = 1/10
-        dist = 16.666 * 3 * 1
-        separate = 900 / dist  ## about 0.9km apart
-        distsq = dist * dist
-        def grid2view(point): return (point[0]*scale, point[1]*scale)
-        viewXY = tuple(math.ceil(v) for v in grid2view((width, height)))
+    ## Make some points
+    points = list()
+    distsq = args.nodeseparation * args.nodeseparation
+    for idx in range(int(args.mapwidth * args.mapheight / distsq) + 3):
+        newpoint = (random.uniform(0, args.mapwidth), random.uniform(0, args.mapheight));
+        points.append(newpoint)
 
-        points = list()
-        for idx in range(int(width * height / distsq) + 3):
-            newpoint = (random.uniform(0, width), random.uniform(0, height));
-            points.append(newpoint)
+    print(f'POINTS (ANTE):  {len(points)}')
+    mapper = IlMapper(points)
+    points = None  ## Don't accidently use the original point set!
+    print(f'POINTS (POST):  {len(mapper._grid.points)}')
+
+    mapper.set_boundary_shore()
+    print(f'SHORE POINTS:   {len(mapper._depth)}')
+
+    if(args.showshore):
+        view = PIL.Image.new('RGB', viewXY)
+        mapper.draw_grid(view, grid2view,
+                         mapper.plan_color_fn(),
+                         vertex_color=(128,128,128))
+        view.show()
+
+    mapper.create_rivers(math.ceil(args.riverseparation / args.nodeseparation),
+                         mouths=args.rivermouths if args.rivermouths else None)
+    print("Rivers are now flowing")
+    
+    if(args.showrivers):
+        view = PIL.Image.new('RGB', viewXY)
+        mapper.draw_grid(view, grid2view,
+                         mapper.plan_color_fn(),
+                         vertex_color=(128,128,128))
+        view.show()
+
+    mapper.levelize_land()
+    print("Land levelized")
+
+    if(args.showdownto):
+        view = PIL.Image.new('RGB', viewXY)
+        mapper.draw_grid(view, grid2view,
+                         mapper.downto_color_fn(),
+                         vertex_color=(128,128,128))
+        view.show()
+
+    if(args.showplan):
+        view = PIL.Image.new('RGB', viewXY)
+        mapper.draw_grid(view, grid2view,
+                         mapper.plan_color_fn(),
+                         vertex_color=(128,128,128))
+        view.show()
+
+    mapper.init_shore_heights()
+    print("Shore lowered")
+    
+    #mapper.gen_method_heights(mapper.branch_height_fn(mapper.slope_fn()))
+    mapper.gen_sweep_heights(mapper.slope_fn(river_slopes = args.riverslopes,
+                                             land_slopes = args.landslopes))
         
-        print(f'POINTS (ANTE):  {len(points)}')
-        mapper = IlMapper(points)
-        print(f'POINTS (POST):  {len(mapper._grid.points)}')
-
-        mapper.set_boundary_shore()
-        print(f'SHORE POINTS:   {len(mapper._depth)}')        
-
-        if(0):
-            view = PIL.Image.new('RGB', viewXY)
-            mapper.draw_grid(view, grid2view,
-                             mapper.plan_color_fn(),
-                             vertex_color=(128,128,128))
-            view.show()
-
+    print("Land heightmapped")
+    
+    mapper.force_one_tile_shore(view2elev)
+    print("Shoreline encouraged")
+    
+    mapper.punch_rivers()
+    
+    print("Rivers punched")
+    
+    if(args.showheight):
+        view = PIL.Image.new('RGB', viewXY)
+        mapper.draw_grid(view, grid2view,
+                         mapper.elev_color_fn())
+        view.show()
         
-        mapper.create_rivers(separate, mouths=1)
-        print("Rivers are now flowing")
-
-        if(1):
-            view = PIL.Image.new('RGB', viewXY)
-            mapper.draw_grid(view, grid2view,
-                             mapper.plan_color_fn(),
-                             vertex_color=(128,128,128))
-            view.show()
-
-        mapper.levelize_land()
-        print("Land levelized")
-
-        if(0):
-            view = PIL.Image.new('RGB', viewXY)
-            mapper.draw_grid(view, grid2view,
-                             mapper.downto_color_fn(),
-                             vertex_color=(128,128,128))
-            view.show()
-
-        if(1):
-            view = PIL.Image.new('RGB', viewXY)
-            mapper.draw_grid(view, grid2view,
-                             mapper.plan_color_fn(),
-                             vertex_color=(128,128,128))
-            view.show()
-
-        mapper.init_shore_heights()
-        print("Shore lowered")
-        
-        #mapper.gen_method_heights(mapper.branch_height_fn(mapper.slope_fn()))
-        mapper.gen_sweep_heights(mapper.slope_fn(river_slopes = (0.001, 0.005, 0.01, 0.015, 0.02),
-                                                 land_slopes = (0.02, 0.03, 0.05, 0.07, 0.10, 0.12,
-                                                                0.15, 0.25, 0.40, 0.55, 0.80, 1.00)))
-        
-        print("Land heightmapped")
-
-        mapper.force_one_tile_shore(lambda p: (p[0]* 18000/1081, p[1] * 18000/1081))
-        print("Shoreline encouraged")
-
-        mapper.punch_rivers()
-
-        print("Rivers punched")
-
-        if(1):
-            view = PIL.Image.new('RGB', viewXY)
-            mapper.draw_grid(view, grid2view,
-                             mapper.elev_color_fn())
-            view.show()
-
-        
-        if(1):
-            view = PIL.Image.new('I;16', (1081, 1081));
-            mapper.draw_heightmap(view, lambda p: (p[0]* 18000/1081, p[1] * 18000/1081))
-            view.show()
+    if(1):
+        view = PIL.Image.new('I;16', (args.elevwidth, args.elevheight));
+        mapper.draw_heightmap(view, view2elev)
+        view.show()
