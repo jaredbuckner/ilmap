@@ -106,23 +106,23 @@ class IlMapper:
             level -= 1
 
     ## Make a slope function suitable for elevating    
-    def slope_fn(self):
+    def slope_fn(self,
+                 river_slopes = (0.01, 0.015,0.02, 0.03, 0.04),
+                 land_slopes = (0.05, 0.09, 0.15, 0.30, 0.75)):
         ordered = sorted(v for v in self._depth.values() if v is not None)
         leastdepth = ordered[0]
         ordered = [v for v in ordered if v >0]
-        depthbits = tuple(ordered[i * len(ordered) // 5] for i in range(5))
+        depthbits = tuple(ordered[i * len(ordered) // len(river_slopes)] for i in range(len(river_slopes)))
 
         def _slope(d):
-            return(0.005 if d >= depthbits[4] else
-                   0.01 if d >= depthbits[3] else
-                   0.015 if d >= depthbits[2] else
-                   0.02 if d >= depthbits[1] else
-                   0.03 if d >= depthbits[0] else
-                   0.04 if d >= leastdepth * 1 // 5 else
-                   0.05 if d >= leastdepth * 2 // 5 else
-                   0.15 if d >= leastdepth * 3 // 5 else
-                   0.30 if d >= leastdepth * 4 // 5 else
-                   0.75)
+            for didx, bit in enumerate(reversed(depthbits)):
+                if d >= bit:
+                    return(river_slopes[-didx])
+            for didx, slope in enumerate(land_slopes):
+                if d >= leastdepth * (didx+1) // len(land_slopes):
+                    return slope
+
+            return land_slopes[-1]
         
         return _slope
 
@@ -447,8 +447,8 @@ class _IlMapper_ut(unittest.TestCase):
         width = 18000
         height = 18000
         scale = 1/10
-        dist = 16.666 * 3 * 2
-        separate = 1200 / dist  ## about 1.2km apart
+        dist = 16.666 * 3 * 1
+        separate = 900 / dist  ## about 0.9km apart
         distsq = dist * dist
         def grid2view(point): return (point[0]*scale, point[1]*scale)
         viewXY = tuple(math.ceil(v) for v in grid2view((width, height)))
@@ -504,7 +504,9 @@ class _IlMapper_ut(unittest.TestCase):
         print("Shore lowered")
         
         #mapper.gen_method_heights(mapper.branch_height_fn(mapper.slope_fn()))
-        mapper.gen_sweep_heights(mapper.slope_fn())
+        mapper.gen_sweep_heights(mapper.slope_fn(river_slopes = (0.001, 0.005, 0.01, 0.015, 0.02),
+                                                 land_slopes = (0.02, 0.03, 0.05, 0.07, 0.10, 0.12,
+                                                                0.15, 0.25, 0.40, 0.55, 0.80, 1.00)))
         
         print("Land heightmapped")
 
