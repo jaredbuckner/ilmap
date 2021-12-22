@@ -284,6 +284,8 @@ class IlMapper:
         ## faster that sum(1 for v in <generator>) if the number of items is
         ## much smaller than the available memory footprint.  Because these
         ## maps are only a million nodes or so, this is reasonable.
+
+        ## This gives the number of nodes involved in a river
         riverlines = len([v for v in self._depth if v > 0])
 
         flowsize = dict()
@@ -312,12 +314,7 @@ class IlMapper:
         
         for rIdx in rivers:
             rHeight = self._height[rIdx]
-            md = src_d
-            if rIdx in riverbeds:
-                for qIdx in self._nindices[self._nindptr[rIdx]:self._nindptr[rIdx+1]]:
-                    if flowdown[qIdx] == rIdx and qIdx in riverbeds:
-                        md = d
-                        break
+            md = d if rIdx in riverbeds else src_d
             
             self._height[rIdx] -= (md if rHeight >=0 else
                                    (40 + rHeight) / 40 * md if rHeight >= -40 else
