@@ -245,13 +245,11 @@ class IlMapper:
                        
     
     def gen_sweep_heights(self, slope_fn):
-        futures = sorted((idx for idx in self._height.keys()),
-                         key=lambda idx: self._height[idx],
-                         reverse=True)
-
+        futures = sorted((height, idx) for idx, height in self._height.items())
+        heapq.heapify(futures)
+        
         while(futures):
-            pIdx = futures.pop()
-            pHeight = self._height[pIdx]
+            pHeight, pIdx = heapq.heappop(futures)
             pPoint = self._grid.points[pIdx]
             for qIdx in self._nindices[self._nindptr[pIdx]:self._nindptr[pIdx+1]]:
                 if qIdx in self._height:
@@ -261,10 +259,8 @@ class IlMapper:
                 ydel = pPoint[1] - qPoint[1]
                 xydist = math.sqrt(xdel * xdel + ydel * ydel)                
                 self._height[qIdx] = pHeight + slope_fn(self._depth[qIdx]) * xydist
-                futures.append(qIdx)
+                heapq.heappush(futures, (self._height[qIdx], qIdx))
             
-            futures.sort(key=lambda idx: self._height[idx],
-                         reverse=True)
             print(len(futures))
 
     def force_one_underwater(self, sets_of_points):
