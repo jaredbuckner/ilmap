@@ -7,6 +7,31 @@ import random
 from scipy.spatial import Delaunay
 import unittest
 
+
+def punctillate_rect(xmin, xmax, ymin, ymax, distsq):
+    xdist = xmax-xmin
+    ydist = ymax-ymin
+    
+    for idx in range(int(xdist * ydist / distsq) + 3):
+        yield (random.uniform(xmin, xmax),
+               random.uniform(ymin, ymax))
+        
+def in_radial_fn(pCenter, base, evenAmplSeq, oddAmplSeq):
+    def _in_radial(point):
+        xdel = point[0]-pCenter[0]
+        ydel = point[1]-pCenter[1]
+        r = math.sqrt(xdel*xdel + ydel*ydel)
+        th = math.atan2(ydel, xdel)
+        ampl = base
+        for mul, ampls in enumerate(zip(evenAmplSeq, oddAmplSeq),
+                                    start=1):
+            freq = th*(mul)
+            ampl += ampls[0] * math.cos(freq) + ampls[1] * math.sin(freq)
+
+        return(r < ampl)
+    
+    return (_in_radial)
+
 class IlMapper:
     def __init__(self, pointSeq):
         self._grid = Delaunay(pointSeq)
@@ -26,6 +51,14 @@ class IlMapper:
             if(-1 in self._grid.neighbors[triIdx]):
                 for pIdx in tri:
                     self._downto[pIdx] = None
+        self._depth = dict(self._downto)
+
+    def set_radial_shore(self, radial_select_fn):
+        self._downto = dict()
+        for pIdx, point in enumerate(self._grid.points):
+            if not radial_select_fn(point):
+                self._downto[pIdx] = None
+
         self._depth = dict(self._downto)
         
     ## region:     A container of point indices to extend
@@ -232,6 +265,7 @@ class IlMapper:
             
             futures.sort(key=lambda idx: self._height[idx],
                          reverse=True)
+            print(len(futures))
 
     def force_one_underwater(self, sets_of_points):
         lowest_setmax = None
@@ -244,10 +278,10 @@ class IlMapper:
                         if highest_in_set is None or self._height[pIdx] > highest_in_set:
                             highest_in_set = self._height[pIdx]
 
-            if lowest_setmax is None or highest_in_set < lowest_setmax:
+            if lowest_setmax is None or highest_in_set is not None and highest_in_set < lowest_setmax:
                 lowest_setmax = highest_in_set
 
-        if(lowest_setmax > 0):
+        if(lowest_setmax is not None and lowest_setmax > 0):
             for pIdx in self._height.keys():
                 self._height[pIdx] -= lowest_setmax
 
@@ -275,6 +309,70 @@ class IlMapper:
             pointsets.append(southset)
             pointsets.append(eastset)
             pointsets.append(westset)
+            
+        self.force_one_underwater(pointsets)
+
+    def force_one_side_shore(self, view2grid_fn):
+        pointsets = list()
+        omicron = 1081 * 2 / 9
+        omega = 1081 * 7 / 9
+        northset = []
+        southset = []
+        eastset = []
+        westset = []
+
+        for piece in range(2, 7):
+            alpha = 1081 * piece / 9
+            beta = 1081 * (piece + 1) / 9
+            northset = []
+            southset = []
+            eastset = []
+            westset = []
+            for part in range(101):
+                weight = part / 100
+                unweight = 1 - weight
+                kappa = weight * alpha + unweight * beta
+                northset.append(view2grid_fn((omicron, kappa)))
+                southset.append(view2grid_fn((omega, kappa)))
+                eastset.append(view2grid_fn((kappa, omicron)))
+                westset.append(view2grid_fn((kappa, omega)))
+
+        pointsets.append(northset)
+        pointsets.append(southset)
+        pointsets.append(eastset)
+        pointsets.append(westset)
+            
+        self.force_one_underwater(pointsets)
+    
+    def force_three_side_shore(self, view2grid_fn):
+        pointsets = list()
+        omicron = 1081 * 2 / 9
+        omega = 1081 * 7 / 9
+        northset = []
+        southset = []
+        eastset = []
+        westset = []
+
+        for piece in range(2, 7):
+            alpha = 1081 * piece / 9
+            beta = 1081 * (piece + 1) / 9
+            northset = []
+            southset = []
+            eastset = []
+            westset = []
+            for part in range(101):
+                weight = part / 100
+                unweight = 1 - weight
+                kappa = weight * alpha + unweight * beta
+                northset.append(view2grid_fn((omicron, kappa)))
+                southset.append(view2grid_fn((omega, kappa)))
+                eastset.append(view2grid_fn((kappa, omicron)))
+                westset.append(view2grid_fn((kappa, omega)))
+
+        pointsets.append(northset + southset + eastset)
+        pointsets.append(northset + southset + westset)
+        pointsets.append(northset + eastset + westset)
+        pointsets.append(southset + eastset + westset)
             
         self.force_one_underwater(pointsets)
     
@@ -322,8 +420,8 @@ class IlMapper:
                 
 
     def draw_heightmap(self, view, view2grid_fn):
-        for x in range(1081):
-            for y in range(1081):
+        for x in range(view.width):
+            for y in range(view.height):
                 aXY = (x, y)
                 aPoint = view2grid_fn((x, y))
                 smplx = self._grid.find_simplex((aPoint,))
@@ -361,11 +459,14 @@ class IlMapper:
                     unweight = 1 - weight
                     pXY = (int(weight * aXY[0] + unweight * bXY[0]),
                            int(weight * aXY[1] + unweight * bXY[1]))
+                    if(0 < pXY[0] < view.width and
+                       1 < pXY[1] < view.height):
+                        pColor = tuple(int(weight * a + unweight * b) for a,b in zip(aColor, bColor))
+                        view.putpixel(pXY, pColor)
 
-                    pColor = tuple(int(weight * a + unweight * b) for a,b in zip(aColor, bColor))
-                    view.putpixel(pXY, pColor)
-
-            if vertex_color is not None:
+            if(vertex_color is not None and
+               0 < aXY[0] < view.width and
+               0 < aXY[1] < view.height):                
                 view.putpixel((int(aXY[0]), int(aXY[1])), vertex_color)
 
     def downto_color_fn(self, pathcolor=(255,255,128), offcolor=(128, 128, 255)):
@@ -444,6 +545,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Triangulation Map Generator');
 
+    pointsel = parser.add_mutually_exclusive_group()
+
+    pointsel.add_argument('--shore', dest='pointsel', const='shore', action='store_const')
+    pointsel.add_argument('--peninsula', dest='pointsel', const='peninsula', action='store_const')
+    pointsel.add_argument('--island', dest='pointsel', const='island', action='store_const')
+    
     parser.add_argument('--mapwidth', type=float, metavar='meters', default=18000)
     parser.add_argument('--mapheight', type=float, metavar='meters', default=18000)
     parser.add_argument('--viewwidth', type=int, metavar='pixels', default=1024)
@@ -484,16 +591,33 @@ if __name__ == '__main__':
     ## Make some points
     points = list()
     distsq = args.nodeseparation * args.nodeseparation
-    for idx in range(int(args.mapwidth * args.mapheight / distsq) + 3):
-        newpoint = (random.uniform(0, args.mapwidth), random.uniform(0, args.mapheight));
-        points.append(newpoint)
+    pminx = args.mapwidth * -1/9
+    pmaxx = args.mapwidth * 10/9
+    pminy = args.mapheight * -1/9
+    pmaxy = args.mapheight * 10/9
+
+    points.extend(punctillate_rect(pminx, pmaxx, pminy, pmaxy, distsq))
 
     print(f'POINTS (ANTE):  {len(points)}')
     mapper = IlMapper(points)
     points = None  ## Don't accidently use the original point set!
     print(f'POINTS (POST):  {len(mapper._grid.points)}')
 
-    mapper.set_boundary_shore()
+    radical = math.sqrt((args.mapwidth * 2 / 9)**2 +
+                        (args.mapheight * 2 / 9)**2)
+    baseamp = math.sqrt((args.mapheight * 3 / 9)**2 +
+                        (args.mapheight * 3 / 9)**2)
+
+    doublings = [2, 4, 8, 16, 32, 64]
+
+    evens = [baseamp / math.sqrt(2) * random.uniform(-1/d,+1/d) for d in doublings]
+    odds  = [baseamp / math.sqrt(2) * random.uniform(-1/d,+1/d) for d in doublings]
+    
+    mapper.set_radial_shore(in_radial_fn(((pmaxx+pminx)/2,
+                                          (pmaxy+pminy)/2),
+                                         radical, evens, odds))
+                                         
+    #mapper.set_boundary_shore()
     print(f'SHORE POINTS:   {len(mapper._depth)}')
 
     if(args.showshore):
