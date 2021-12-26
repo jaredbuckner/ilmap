@@ -7,6 +7,14 @@ import random
 from scipy.spatial import Delaunay
 import unittest
 
+def rand_sum_to_n(summa, elements):
+    for pick in range(elements-1, -1, -1):
+        if pick==0:
+            yield summa
+        else:
+            x = summa - random.uniform(0,summa**pick)**(1/pick)
+            summa -= x
+            yield x
 
 def punctillate_rect(xmin, xmax, ymin, ymax, distsq):
     xdist = xmax-xmin
@@ -87,6 +95,7 @@ class IlMapper:
 
         return(adjacents)
 
+               
     ## Call this to create rivers separated by the given grid distance
     def create_rivers(self, dist=1, mouths=None):
        ## Create the riverine structures
@@ -126,10 +135,20 @@ class IlMapper:
                 qIdx = self._downto[qIdx]
 
     ## After creating rivers, levelize the remaining land
-    def levelize_land(self):
+    def levelize_land(self, taper=0):
+        riverdepths = sorted((idx for idx in self._depth.keys() if self._depth[idx] is not None),
+                             key=lambda idx:self._depth[idx])
         level = 0
         while(True):
-            steppe = self.extend_region(self._downto.keys(), 1);
+            exfrom = self._downto.keys()
+            exclud = set()
+            if taper and riverdepths:
+                riverdepths = riverdepths[:int(taper * len(riverdepths) / (taper + 1))]
+                exfrom = set(exfrom)
+                exfrom.difference_update(riverdepths)
+                exclud = riverdepths
+                taper-=1
+            steppe = self.extend_region(exfrom, 1, exclud);
             if(not steppe):
                 break
             for pIdx, paths in steppe.items():
@@ -261,8 +280,6 @@ class IlMapper:
                 self._height[qIdx] = pHeight + slope_fn(self._depth[qIdx]) * xydist
                 heapq.heappush(futures, (self._height[qIdx], qIdx))
             
-            print(len(futures))
-
     def force_one_underwater(self, sets_of_points):
         lowest_setmax = None
         for pSet in sets_of_points:
@@ -559,6 +576,7 @@ if __name__ == '__main__':
     parser.add_argument('--riverslopes', type=float, nargs='+', default=(0.01, 0.015,0.02, 0.03, 0.04))
     parser.add_argument('--riverdepth', type=float, metavar='meters', default=6)
     parser.add_argument('--landslopes', type=float, nargs='+', default=(0.05, 0.09, 0.15, 0.30, 0.75))
+    parser.add_argument('--landtaper', type=int, metavar='steps', default=0)
     parser.add_argument('--showshore', action='store_true')
     parser.add_argument('--showrivers', action='store_true')
     parser.add_argument('--showdownto', action='store_true')
@@ -598,16 +616,41 @@ if __name__ == '__main__':
     mapper = IlMapper(points)
     points = None  ## Don't accidently use the original point set!
     print(f'POINTS (POST):  {len(mapper._grid.points)}')
+    
+    ##    radical = math.sqrt((args.mapwidth * 2 / 9)**2 +
+    ##                        (args.mapheight * 2 / 9)**2)
+    ##    baseamp = math.sqrt((args.mapheight * 3 / 9)**2 +
+    ##                        (args.mapheight * 3 / 9)**2)
 
-    radical = math.sqrt((args.mapwidth * 2 / 9)**2 +
-                        (args.mapheight * 2 / 9)**2)
-    baseamp = math.sqrt((args.mapheight * 3 / 9)**2 +
-                        (args.mapheight * 3 / 9)**2)
-
-    doublings = [2, 4, 8, 16, 32, 64]
-
-    evens = [baseamp / math.sqrt(2) * random.uniform(-1/d,+1/d) for d in doublings]
-    odds  = [baseamp / math.sqrt(2) * random.uniform(-1/d,+1/d) for d in doublings]
+    if(args.pointsel == 'island'):
+        radical = args.mapwidth * 1.5 / 9
+        baseamp = args.mapwidth * 1 / 9
+        thetamin = -math.pi
+        thetamax = math.pi
+    elif(args.pointsel == 'peninsula'):
+        radical = args.mapwidth * 4 / 9
+        baseamp = args.mapwidth * 3 / 9
+        thetamin = random.uniform(-math.pi, +math.pi)
+        thetamax = thetamin + random.uniform(math.pi / 360, math.pi / 60)
+    elif(args.pointsel == 'shore'):
+        radical = args.mapwidth * 6 / 9
+        baseamp = -args.mapwidth * 5 / 9
+        thetamin = random.uniform(-math.pi, +math.pi)
+        thetamax = thetamin + random.uniform(math.pi / 360, math.pi / 60)
+    else:
+        radical = args.mapwidth * 6 / 9
+        baseamp = args.mapwidth * 4.5 / 9
+        thetamin = -math.pi
+        thetamax = math.pi
+        
+    evens = []
+    odds = []
+    for ampl in rand_sum_to_n(abs(baseamp), 12):
+        if baseamp < 0:
+            ampl *= -1
+        theta = random.uniform(thetamin, thetamax)
+        evens.append(ampl * math.cos(theta))
+        odds.append(ampl * math.sin(theta))
     
     mapper.set_radial_shore(in_radial_fn(((pmaxx+pminx)/2,
                                           (pmaxy+pminy)/2),
@@ -634,7 +677,7 @@ if __name__ == '__main__':
                          vertex_color=(128,128,128))
         view.show()
 
-    mapper.levelize_land()
+    mapper.levelize_land(taper=args.landtaper)
     print("Land levelized")
 
     if(args.showdownto):
