@@ -40,12 +40,56 @@ def in_radial_fn(pCenter, base, evenAmplSeq, oddAmplSeq):
     
     return (_in_radial)
 
+def make_bounded_rfn(pCenter, mindist, maxdist, *, overtones=17,
+                     tiltangle=None, tiltspread=math.pi/30, istilttoward=True):
+    radical = (maxdist + mindist) / 2
+    baseamp = (maxdist - mindist) / 2
+    thetamin = tiltangle if tiltangle is not None else -math.pi
+    thetamax = tiltangle+tiltspread if tiltangle is not None else +math.pi
+    
+    evens = []
+    odds = []
+    for ampl in rand_sum_to_n(baseamp, overtones):
+        if not istilttoward:
+            ampl *= -1
+        theta = random.uniform(thetamin, thetamax)
+        evens.append(ampl * math.cos(theta))
+        odds.append(ampl * math.sin(theta))
+
+    return(in_radial_fn(pCenter, radical, evens, odds))
+
 class IlMapper:
     def __init__(self, pointSeq):
         self._grid = Delaunay(pointSeq)
         self._nindptr, self._nindices = self._grid.vertex_neighbor_vertices
+        self._forbidden_edges = set()
+    
+    def forbid_edge(self, aIdx, bIdx):
+        if aIdx < bIdx:
+            self._forbidden_edges.add((aIdx, bIdx))
+        else:
+            self._forbidden_edges.add((bIdx, aIdx))
 
-    ## Call one of the next two functions to set the shoreline based on grid features
+    def forbid_long_edges(self, limit):
+        limitsq = limit * limit
+        for aIdx, aPoint in enumerate(self._grid.points):
+            for bIdx in self._nindices[self._nindptr[aIdx]:self._nindptr[aIdx+1]]:
+                if bIdx < aIdx:
+                    continue
+                bPoint = self._grid.points[bIdx]
+                aDelt, bDelt = aPoint[0] - bPoint[0], aPoint[1] - bPoint[1]
+                if aDelt*aDelt + bDelt*bDelt > limitsq:
+                    self.forbid_edge(aIdx, bIdx)
+
+        for aIdx, aPoint in enumerate(self._grid.points):
+            if all(self.is_edge_forbidden(aIdx, bIdx) for bIdx in self._nindices[self._nindptr[aIdx]:self._nindptr[aIdx+1]]):
+                raise(RuntimeError("Too many forbidden edges!"))
+    
+    def is_edge_forbidden(self, aIdx, bIdx):
+        return((aIdx, bIdx) in self._forbidden_edges if aIdx < bIdx else
+               (bIdx, aIdx) in self._forbidden_edges)
+        
+    ## Call one of the next three functions to set the shoreline based on grid features
     def set_hull_shore(self):
         self._downto = dict();
         for face in self._grid.convex_hull:
@@ -61,10 +105,10 @@ class IlMapper:
                     self._downto[pIdx] = None
         self._depth = dict(self._downto)
 
-    def set_radial_shore(self, radial_select_fn):
+    def set_radial_shore(self, *radial_select_fn_list):
         self._downto = dict()
         for pIdx, point in enumerate(self._grid.points):
-            if not radial_select_fn(point):
+            if not any(inside(point) for inside in radial_select_fn_list):
                 self._downto[pIdx] = None
 
         self._depth = dict(self._downto)
@@ -73,25 +117,37 @@ class IlMapper:
     ## dist:       An integer distance (in links) to extend
     ## exclusion:  A container of point indices which extension must not include
     ##---
-    ## adjacents:  A dictionary of extension point indices to a list of index
-    ##             tuples representing a path from region to adjacent
+    ## adjacents:  A dictionary of extension point indices to an index
+    ##             tuple representing a path from region to adjacent
     def extend_region(self, region, dist=1, exclusion=()):
-        adjacents = dict((r, [(r,)]) for r in region)
+        adjacents = dict((r, (r,)) for r in region)
+        adjacentweights = dict((r, 1) for r in adjacents.keys())
         exclusion = set(exclusion);
         
         while(dist > 0):
             exclusion.update(adjacents.keys());
-            localadjacents = dict();
+            localadjacents = dict()
+            localweights = dict()
             dist -= 1;
 
             for rIdx in adjacents.keys():
                 for aIdx in self._nindices[self._nindptr[rIdx]:self._nindptr[rIdx+1]]:
+                    if(self.is_edge_forbidden(aIdx, rIdx)):
+                        continue
                     if(aIdx not in region and aIdx not in exclusion):
-                        localadjacents.setdefault(aIdx, list())
-                        for path in adjacents[rIdx]:
-                            localadjacents[aIdx].append(path + (aIdx,))
+                        if aIdx in localadjacents:
+                            pick = random.randrange(localweights[aIdx] + adjacentweights[rIdx])
+                            if(pick < adjacentweights[rIdx]):
+                                localadjacents[aIdx] = adjacents[rIdx] + (aIdx,)
+                                pass
+                            localweights[aIdx] += adjacentweights[rIdx]
+                        else:
+                            localadjacents[aIdx] = adjacents[rIdx] + (aIdx,)
+                            localweights[aIdx] = adjacentweights[rIdx]
+                            
 
             adjacents = localadjacents
+            adjacentweights = localweights
 
         return(adjacents)
 
@@ -100,27 +156,19 @@ class IlMapper:
     def create_rivers(self, dist=1, mouths=None):
        ## Create the riverine structures
         while(True):
-            
-            possibilities = self.extend_region(self._downto.keys(), dist);
-
-            if(mouths is not None):
-                if(mouths > 0):
-                    mouths -= 1;
-                else:
-                    newposs = dict()
-                    for rIdx, paths in possibilities.items():
-                        newpaths = []                        
-                        for path in paths:
-                            if path[0] in self._downto and self._downto[path[0]] is not None:
-                                newpaths.append(path)
-                        if newpaths:
-                            newposs[rIdx] = newpaths
-                    possibilities = newposs
+            if mouths is None or mouths > 0:
+                possibilities = self.extend_region(self._downto.keys(), dist);
+            else:
+                possibilities = self.extend_region((k for k, d in self._downto.items() if d is not None),
+                                                   dist,
+                                                   (k for k, d in self._downto.items() if d is None))
+            if mouths is not None and mouths > 0:
+                mouths -= 1
             
             if(not possibilities):
                 break
-            paths = random.choice(tuple(possibilities.values()));
-            path = random.choice(paths)
+
+            pathIdx, path = random.choice(list(possibilities.items()))
 
             for pathIdx in range(1,len(path)):
                 self._downto[path[pathIdx]] = path[pathIdx-1]
@@ -151,8 +199,7 @@ class IlMapper:
             steppe = self.extend_region(exfrom, 1, exclud);
             if(not steppe):
                 break
-            for pIdx, paths in steppe.items():
-                path = random.choice(paths)
+            for pIdx, path in steppe.items():
                 self._downto[pIdx] = path[0]
                 self._depth[pIdx] = level
             level -= 1
@@ -271,6 +318,8 @@ class IlMapper:
             pHeight, pIdx = heapq.heappop(futures)
             pPoint = self._grid.points[pIdx]
             for qIdx in self._nindices[self._nindptr[pIdx]:self._nindptr[pIdx+1]]:
+                if self.is_edge_forbidden(pIdx, qIdx):
+                    continue
                 if qIdx in self._height:
                     continue
                 qPoint = self._grid.points[qIdx]
@@ -406,6 +455,8 @@ class IlMapper:
             flowsize[pIdx] = 0
             flowdown[pIdx] = None
             for qIdx in self._nindices[self._nindptr[pIdx]:self._nindptr[pIdx+1]]:
+                if self.is_edge_forbidden(pIdx, qIdx):
+                    continue
                 qHeight = self._height[qIdx]
                 qDelt = pHeight - qHeight
                 if(qDelt > 0 and (steepest is None or steepest < qDelt)):
@@ -563,6 +614,7 @@ if __name__ == '__main__':
     pointsel.add_argument('--shore', dest='pointsel', const='shore', action='store_const')
     pointsel.add_argument('--peninsula', dest='pointsel', const='peninsula', action='store_const')
     pointsel.add_argument('--island', dest='pointsel', const='island', action='store_const')
+    pointsel.add_argument('--bay', dest='pointsel', const='bay', action='store_const')
     
     parser.add_argument('--mapwidth', type=float, metavar='meters', default=18000)
     parser.add_argument('--mapheight', type=float, metavar='meters', default=18000)
@@ -571,6 +623,7 @@ if __name__ == '__main__':
     parser.add_argument('--elevwidth', type=int, metavar='pixels', default=1081)
     parser.add_argument('--elevheight', type=int, metavar='pixels', default=1081)
     parser.add_argument('--nodeseparation', type=float, metavar='meters', default=50)
+    parser.add_argument('--forbidedgefactor', type=float, default=5)
     parser.add_argument('--riverseparation', type=float, metavar='meters', default=900)
     parser.add_argument('--rivermouths', type=int, metavar='mouths')
     parser.add_argument('--riverslopes', type=float, nargs='+', default=(0.01, 0.015,0.02, 0.03, 0.04))
@@ -605,10 +658,11 @@ if __name__ == '__main__':
     ## Make some points
     points = list()
     distsq = args.nodeseparation * args.nodeseparation
-    pminx = args.mapwidth * -1/9
-    pmaxx = args.mapwidth * 10/9
-    pminy = args.mapheight * -1/9
-    pmaxy = args.mapheight * 10/9
+    overflow = 1/9
+    pminx = args.mapwidth * -overflow
+    pmaxx = args.mapwidth * (1 + overflow)
+    pminy = args.mapheight * -overflow
+    pmaxy = args.mapheight * (1 + overflow)
 
     points.extend(punctillate_rect(pminx, pmaxx, pminy, pmaxy, distsq))
 
@@ -616,45 +670,61 @@ if __name__ == '__main__':
     mapper = IlMapper(points)
     points = None  ## Don't accidently use the original point set!
     print(f'POINTS (POST):  {len(mapper._grid.points)}')
+
+    mapper.forbid_long_edges(args.nodeseparation * args.forbidedgefactor)
+
+    print(f'{len(mapper._forbidden_edges)} edges forbidden!')
     
     ##    radical = math.sqrt((args.mapwidth * 2 / 9)**2 +
     ##                        (args.mapheight * 2 / 9)**2)
     ##    baseamp = math.sqrt((args.mapheight * 3 / 9)**2 +
     ##                        (args.mapheight * 3 / 9)**2)
 
+    radials = []
+    mapcenter = ((pmaxx+pminx)/2,
+                 (pmaxy+pminy)/2)
     if(args.pointsel == 'island'):
-        radical = args.mapwidth * 1.5 / 9
-        baseamp = args.mapwidth * 1 / 9
-        thetamin = -math.pi
-        thetamax = math.pi
+        radials.append(make_bounded_rfn(mapcenter,
+                                        args.mapwidth * 1.5 / 9,
+                                        args.mapwidth * 2.5 / 9))
     elif(args.pointsel == 'peninsula'):
-        radical = args.mapwidth * 4 / 9
-        baseamp = args.mapwidth * 3 / 9
-        thetamin = random.uniform(-math.pi, +math.pi)
-        thetamax = thetamin + random.uniform(math.pi / 360, math.pi / 60)
+        radials.append(make_bounded_rfn(mapcenter,
+                                        args.mapwidth * 1 / 9,
+                                        args.mapwidth * 7 / 9,
+                                        tiltangle=random.uniform(-math.pi, +math.pi),
+                                        tiltspread=random.uniform(math.pi / 360, math.pi / 60)))
     elif(args.pointsel == 'shore'):
-        radical = args.mapwidth * 6 / 9
-        baseamp = -args.mapwidth * 5 / 9
-        thetamin = random.uniform(-math.pi, +math.pi)
-        thetamax = thetamin + random.uniform(math.pi / 360, math.pi / 60)
+        radials.append(make_bounded_rfn(mapcenter,
+                                        args.mapwidth * 1 / 9,
+                                        args.mapwidth * 11 / 9,
+                                        istilttoward=False,
+                                        tiltangle=random.uniform(-math.pi, +math.pi),
+                                        tiltspread=random.uniform(math.pi / 360, math.pi / 60)))
+    elif(args.pointsel == 'bay'):
+        radials = [make_bounded_rfn(((pmaxx+pminx) * 1.5 / 9,
+                                     (pmaxy+pminy) * 3.5 / 9),
+                                    args.mapwidth * 3 / 9,
+                                    args.mapwidth * 4 / 9),
+                   make_bounded_rfn(((pmaxx+pminx) * 7.5 / 9,
+                                     (pmaxy+pminy) * 3.5 / 9),
+                                    args.mapwidth * 3 / 9,
+                                    args.mapwidth * 4 / 9),
+                   make_bounded_rfn(((pmaxy+pminy) / 2,
+                                     0),
+                                    args.mapwidth * 3.5 / 9,
+                                    args.mapwidth * 5 / 9),
+                   make_bounded_rfn((0,0),
+                                    args.mapwidth * 4 / 9,
+                                    args.mapwidth * 5 / 9),
+                   make_bounded_rfn((args.mapwidth,0),
+                                    args.mapwidth * 4 / 9,
+                                    args.mapwidth * 5 / 9)]
     else:
-        radical = args.mapwidth * 6 / 9
-        baseamp = args.mapwidth * 4.5 / 9
-        thetamin = -math.pi
-        thetamax = math.pi
+        radials.append(make_bounded_rfn(mapcenter,
+                                        args.mapwidth * 1.5 / 9,
+                                        args.mapwidth * 10.5 / 9))
         
-    evens = []
-    odds = []
-    for ampl in rand_sum_to_n(abs(baseamp), 12):
-        if baseamp < 0:
-            ampl *= -1
-        theta = random.uniform(thetamin, thetamax)
-        evens.append(ampl * math.cos(theta))
-        odds.append(ampl * math.sin(theta))
-    
-    mapper.set_radial_shore(in_radial_fn(((pmaxx+pminx)/2,
-                                          (pmaxy+pminy)/2),
-                                         radical, evens, odds))
+    mapper.set_radial_shore(*radials)
                                          
     #mapper.set_boundary_shore()
     print(f'SHORE POINTS:   {len(mapper._depth)}')
