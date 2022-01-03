@@ -675,18 +675,39 @@ if __name__ == '__main__':
 
     print(f'{len(mapper._forbidden_edges)} edges forbidden!')
     
-    ##    radical = math.sqrt((args.mapwidth * 2 / 9)**2 +
-    ##                        (args.mapheight * 2 / 9)**2)
-    ##    baseamp = math.sqrt((args.mapheight * 3 / 9)**2 +
-    ##                        (args.mapheight * 3 / 9)**2)
-
+    
     radials = []
+    mapninth = args.mapwidth / 9
     mapcenter = ((pmaxx+pminx)/2,
                  (pmaxy+pminy)/2)
     if(args.pointsel == 'island'):
-        radials.append(make_bounded_rfn(mapcenter,
-                                        args.mapwidth * 1.5 / 9,
-                                        args.mapwidth * 2.5 / 9))
+        # Centers
+        numIslands = random.randrange(1, 10)
+        totArea = math.pi * mapninth * mapninth * 2.25 * 2.25
+        for nIdx, isleArea in enumerate(rand_sum_to_n(totArea, numIslands)):
+            isleMidRad = math.sqrt(isleArea / math.pi)
+            isleMinRad = 0
+            if isleMinRad >= mapninth * 1.25:
+                isleMinRad = 0.5 * isleMidRad
+            isleMaxRad = 2 * isleMidRad - isleMinRad
+            isleMaxPos = 2.5 * mapninth - isleMaxRad
+            isleMinPos = isleMaxPos * 0.8
+
+            islePos = random.uniform(isleMinPos, isleMaxPos)
+            isleTheta = math.tau * nIdx / numIslands
+            radials.append(make_bounded_rfn((4.5 * mapninth + islePos * math.cos(isleTheta),
+                                             4.5 * mapninth + islePos * math.sin(isleTheta)),
+                                            isleMinRad, isleMaxRad))
+
+        # Edges
+        for centerPoint in ((4.5 * mapninth, 0),
+                            (0, 4.5 * mapninth),
+                            (4.5 * mapninth, args.mapwidth),
+                            (args.mapwidth, 4.5 * mapninth)):
+            radials.append(make_bounded_rfn(centerPoint,
+                                            1.5 * mapninth,
+                                            2.0 * mapninth))
+       
     elif(args.pointsel == 'peninsula'):
         radials.append(make_bounded_rfn(mapcenter,
                                         args.mapwidth * 1 / 9,
