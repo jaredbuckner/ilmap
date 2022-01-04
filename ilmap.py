@@ -58,6 +58,19 @@ def make_bounded_rfn(pCenter, mindist, maxdist, *, overtones=17,
 
     return(in_radial_fn(pCenter, radical, evens, odds))
 
+## NOTE:  Does not yield pTo, in accordance with python range behavior
+def koch_path(pFrom, pTo, maxStep, bendFactor):
+    pDel = (pTo[0]-pFrom[0], pTo[1]-pFrom[1])
+    if pDel[0]*pDel[0] + pDel[1]*pDel[1] <= maxStep:
+        yield pFrom
+    else:
+        localFactor = random.uniform(-bendFactor, bendFactor)
+        pOrtho = (-pDel[1] * localFactor / math.sqrt(2), pDel[0] * localFactor / math.sqrt(2))
+        pMid = ((pFrom[0] + pTo[0]) / 2 + pOrtho[0],
+                (pFrom[1] + pTo[1]) / 2 + pOrtho[1])
+        yield from koch_path(pFrom, pMid, maxStep, bendFactor)
+        yield from koch_path(pMid, pTo, maxStep, bendFactor)
+
 class IlMapper:
     def __init__(self, pointSeq):
         self._grid = Delaunay(pointSeq)
@@ -111,6 +124,15 @@ class IlMapper:
             if not any(inside(point) for inside in radial_select_fn_list):
                 self._downto[pIdx] = None
 
+        self._depth = dict(self._downto)
+
+    def set_koch_shore(self, pFrom, pTo, maxStep, bendFactor):
+        self._downto = dict()
+        for kPoint in koch_path(pFrom, pTo, maxStep, bendFactor):
+            smplx = self._grid.find_simplex((kPoint,))
+            if smplx[0] != -1:
+                for pIdx in self._grid.simplices[smplx[0]]:
+                    self._downto[pIdx] = None
         self._depth = dict(self._downto)
         
     ## region:     A container of point indices to extend
@@ -184,6 +206,8 @@ class IlMapper:
 
     ## After creating rivers, levelize the remaining land
     def levelize_land(self, taper=0):
+        exshore = 0 if taper == 0 else random.randrange(taper)
+        shoredepths = set(idx for idx in self._depth.keys() if self._depth[idx] is None)
         riverdepths = sorted((idx for idx in self._depth.keys() if self._depth[idx] is not None),
                              key=lambda idx:self._depth[idx])
         level = 0
@@ -194,7 +218,12 @@ class IlMapper:
                 riverdepths = riverdepths[:int(taper * len(riverdepths) / (taper + 1))]
                 exfrom = set(exfrom)
                 exfrom.difference_update(riverdepths)
-                exclud = riverdepths
+                exclud.update(riverdepths)
+                
+                if taper > exshore:
+                    exfrom.difference_update(shoredepths)
+                    exclud.update(shoredepths)
+                    
                 taper-=1
             steppe = self.extend_region(exfrom, 1, exclud);
             if(not steppe):
@@ -615,6 +644,7 @@ if __name__ == '__main__':
     pointsel.add_argument('--peninsula', dest='pointsel', const='peninsula', action='store_const')
     pointsel.add_argument('--island', dest='pointsel', const='island', action='store_const')
     pointsel.add_argument('--bay', dest='pointsel', const='bay', action='store_const')
+    pointsel.add_argument('--strait', dest='pointsel', const='strait', action='store_const')
     
     parser.add_argument('--mapwidth', type=float, metavar='meters', default=18000)
     parser.add_argument('--mapheight', type=float, metavar='meters', default=18000)
@@ -740,13 +770,27 @@ if __name__ == '__main__':
                    make_bounded_rfn((args.mapwidth,0),
                                     args.mapwidth * 4 / 9,
                                     args.mapwidth * 5 / 9)]
+    elif(args.pointsel == 'strait'):
+        radius = max(abs(pmaxx - mapcenter[0]),
+                     abs(pminx - mapcenter[0]),
+                     abs(pmaxy - mapcenter[1]),
+                     abs(pminy - mapcenter[1])) * math.sqrt(2)
+        theta = random.uniform(-math.pi, math.pi)
+
+        pDel = (radius * math.cos(theta), radius * math.sin(theta))
+        pFrom = (mapcenter[0] - pDel[0], mapcenter[1] - pDel[1])
+        pTo = (mapcenter[0] + pDel[0], mapcenter[1] + pDel[1])
+        mapper.set_koch_shore(pFrom, pTo, 2 ** random.uniform(-1, 1) * args.nodeseparation,
+                              random.uniform(0.5, 1.5))
+        
     else:
         radials.append(make_bounded_rfn(mapcenter,
                                         args.mapwidth * 1.5 / 9,
                                         args.mapwidth * 10.5 / 9))
-        
-    mapper.set_radial_shore(*radials)
-                                         
+
+    if radials:
+        mapper.set_radial_shore(*radials)
+                          
     #mapper.set_boundary_shore()
     print(f'SHORE POINTS:   {len(mapper._depth)}')
 
