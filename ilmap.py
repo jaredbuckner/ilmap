@@ -65,7 +65,7 @@ def koch_path(pFrom, pTo, maxStep, bendFactor):
         yield pFrom
     else:
         localFactor = random.uniform(-bendFactor, bendFactor)
-        pOrtho = (-pDel[1] * localFactor / math.sqrt(2), pDel[0] * localFactor / math.sqrt(2))
+        pOrtho = (-pDel[1] * localFactor * math.sqrt(3) / 2, pDel[0] * localFactor * math.sqrt(3) / 2)
         pMid = ((pFrom[0] + pTo[0]) / 2 + pOrtho[0],
                 (pFrom[1] + pTo[1]) / 2 + pOrtho[1])
         yield from koch_path(pFrom, pMid, maxStep, bendFactor)
@@ -214,6 +214,7 @@ class IlMapper:
         while(True):
             exfrom = self._downto.keys()
             exclud = set()
+            canstop = True
             if taper and riverdepths:
                 riverdepths = riverdepths[:int(taper * len(riverdepths) / (taper + 1))]
                 exfrom = set(exfrom)
@@ -225,8 +226,10 @@ class IlMapper:
                     exclud.update(shoredepths)
                     
                 taper-=1
+                canstop = False
+                    
             steppe = self.extend_region(exfrom, 1, exclud);
-            if(not steppe):
+            if(canstop and not steppe):
                 break
             for pIdx, path in steppe.items():
                 self._downto[pIdx] = path[0]
@@ -467,7 +470,7 @@ class IlMapper:
             
         self.force_one_underwater(pointsets)
     
-    def punch_rivers(self, d=6, src_d=6):
+    def punch_rivers(self, d=6, src_d=6, wsegs=1):
         ## NOTE:  Constructing a list only for counting the elements is bad
         ## from a memory perspective.  However, it turns out in python this is
         ## faster that sum(1 for v in <generator>) if the number of items is
@@ -499,16 +502,22 @@ class IlMapper:
                 qIdx = flowdown[qIdx]
 
         rivers = sorted(flowsize.keys(), key=lambda idx:flowsize[idx], reverse=True)
-        riverbeds = set(rivers[:riverlines])
-        rivers = set(riverbeds)
-        rivers.update(self.extend_region(rivers))
+        rivers = rivers[:riverlines]
+        maxflow = flowsize[rivers[0]]
+        minflow = flowsize[rivers[-1]]
+        flowspan = maxflow - minflow
         
-        for rIdx in rivers:
+        riverNodes = set()
+        for segment in range(1, wsegs+1):
+            minsegflow = maxflow - flowspan * segment / wsegs
+            riverNodes.update(self.extend_region(riverNodes))
+            riverNodes.update(rIdx for rIdx in rivers if flowsize[rIdx] >= minsegflow)
+    
+        for rIdx in riverNodes:
             rHeight = self._height[rIdx]
-            md = d if rIdx in riverbeds else src_d
             
-            self._height[rIdx] -= (md if rHeight >=0 else
-                                   (40 + rHeight) / 40 * md if rHeight >= -40 else
+            self._height[rIdx] -= (d if rHeight >=0 else
+                                   (40 + rHeight) / 40 * d if rHeight >= -40 else
                                    0)
                 
 
@@ -658,6 +667,7 @@ if __name__ == '__main__':
     parser.add_argument('--rivermouths', type=int, metavar='mouths')
     parser.add_argument('--riverslopes', type=float, nargs='+', default=(0.01, 0.015,0.02, 0.03, 0.04))
     parser.add_argument('--riverdepth', type=float, metavar='meters', default=6)
+    parser.add_argument('--rivertaper', type=int, metavar='sections', default=2)
     parser.add_argument('--landslopes', type=float, nargs='+', default=(0.05, 0.09, 0.15, 0.30, 0.75))
     parser.add_argument('--landtaper', type=int, metavar='steps', default=0)
     parser.add_argument('--showshore', action='store_true')
@@ -781,7 +791,7 @@ if __name__ == '__main__':
         pFrom = (mapcenter[0] - pDel[0], mapcenter[1] - pDel[1])
         pTo = (mapcenter[0] + pDel[0], mapcenter[1] + pDel[1])
         mapper.set_koch_shore(pFrom, pTo, 2 ** random.uniform(-1, 1) * args.nodeseparation,
-                              random.uniform(0.5, 1.5))
+                              random.uniform(0.2, 0.8))
         
     else:
         radials.append(make_bounded_rfn(mapcenter,
