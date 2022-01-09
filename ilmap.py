@@ -469,57 +469,87 @@ class IlMapper:
         pointsets.append(southset + eastset + westset)
             
         self.force_one_underwater(pointsets)
+
+    def height_compress(self, tgtmaxheight=1024-40):
+        maxheight = max(self._height.values())
+        if maxheight > tgtmaxheight:
+            scale = tgtmaxheight / maxheight
+            for pIdx, pHeight in self._height.items():
+                if pHeight > 0:
+                    self._height[pIdx] *= scale
     
-    def punch_rivers(self, d=6, src_d=6, wsegs=1):
-        ## NOTE:  Constructing a list only for counting the elements is bad
-        ## from a memory perspective.  However, it turns out in python this is
-        ## faster that sum(1 for v in <generator>) if the number of items is
-        ## much smaller than the available memory footprint.  Because these
-        ## maps are only a million nodes or so, this is reasonable.
 
+    ## This takes a fully developed set of heights and reconstructs the set of
+    ## depths and downtos based on flow.  The depths are normalized such that the same
+    ## number of river nodes and shore nodes exist.
+    def relevelize(self):
         ## This gives the number of nodes involved in a river
-        riverlines = sum(1 for v in self._depth.values() if v is not None and v > 0)
+        numrivernodes = sum(1 for v in self._depth.values() if v is not None and v > 0)
 
-        flowsize = dict()
-        flowdown = dict()
-        for pIdx, pHeight in self._height.items():            
+        for pIdx, pHeight in self._height.items():
+            if self._depth[pIdx] is None:
+                continue
             steepest = None
-            flowsize[pIdx] = 0
-            flowdown[pIdx] = None
+            pPoint = self._grid.points[pIdx]
+            self._depth[pIdx] = 0
+            self._downto[pIdx] = None
+            
             for qIdx in self._nindices[self._nindptr[pIdx]:self._nindptr[pIdx+1]]:
                 if self.is_edge_forbidden(pIdx, qIdx):
                     continue
                 qHeight = self._height[qIdx]
-                qDelt = pHeight - qHeight
-                if(qDelt > 0 and (steepest is None or steepest < qDelt)):
-                    steepest = qDelt
-                    flowdown[pIdx] = qIdx
+                qRise = pHeight - qHeight
+                if(qRise < 0):
+                    continue
+                qPoint = self._grid.points[qIdx]
+                qDel = (qPoint[0]-pPoint[0], qPoint[1]-pPoint[1])
+                qRun = math.sqrt(qDel[0] * qDel[0] + qDel[1] * qDel[1])
+                qSlope = qRise / qRun
+                if(steepest is None or steepest < qSlope):
+                    steepest = qSlope
+                    self._downto[pIdx] = qIdx
 
-        for pIdx in flowsize.keys():
+            if self._downto[pIdx] is None:
+                raise(RuntimeError("Created an unintended sink node!  How?"))
+
+        for pIdx, pDepth in self._depth.items():
+            if pDepth is None:
+                continue
             qIdx = pIdx
-            while(qIdx is not None):
-                flowsize[qIdx] += 1
-                qIdx = flowdown[qIdx]
+            while(qIdx is not None and self._depth[qIdx] is not None):
+                self._depth[qIdx] += 1
+                qIdx = self._downto[qIdx]
 
-        rivers = sorted(flowsize.keys(), key=lambda idx:flowsize[idx], reverse=True)
-        rivers = rivers[:riverlines]
-        maxflow = flowsize[rivers[0]]
-        minflow = flowsize[rivers[-1]]
-        flowspan = maxflow - minflow
-        
+        # Renormalize so the number of river nodes is the same (or nearly so)
+        alldepths = sorted(v for v in self._depth.values() if v is not None)
+        minriverflow = alldepths[-numrivernodes] - 1  # Rivers have flow of 1
+        for pIdx in self._depth:
+            if self._depth[pIdx] is not None:
+                self._depth[pIdx] -= minriverflow
+
+    def punch_rivers(self, d=6, src_d=6, minsegs=0, maxsegs=1):
+        maxflow = max(v for v in self._depth.values() if v is not None)
+        print(f"MAXFLOW: {maxflow}")
         riverNodes = set()
-        for segment in range(1, wsegs+1):
-            minsegflow = maxflow - flowspan * segment / wsegs
+
+        tapersegs = maxsegs - minsegs
+        for segment in range(tapersegs):
+            minsegflow = maxflow * (1 -  segment / tapersegs)
             riverNodes.update(self.extend_region(riverNodes))
-            riverNodes.update(rIdx for rIdx in rivers if flowsize[rIdx] >= minsegflow)
-    
+            riverNodes.update(set(rIdx for rIdx, dp in self._depth.items()
+                                  if dp is not None and dp > minsegflow))
+
+        if(minsegs > 0):
+            riverNodes.update(set(rIdx for rIdx, dp in self._depth.items()
+                                  if dp is not None and dp > 0))
+            riverNodes.update(self.extend_region(riverNodes, dist=minsegs))
+            
         for rIdx in riverNodes:
             rHeight = self._height[rIdx]
             
             self._height[rIdx] -= (d if rHeight >=0 else
                                    (40 + rHeight) / 40 * d if rHeight >= -40 else
                                    0)
-                
 
     def draw_heightmap(self, view, view2grid_fn):
         for x in range(view.width):
@@ -581,7 +611,7 @@ class IlMapper:
 
         return _color        
     
-    def plan_color_fn(self, undeepest=None):
+    def plan_color_fn(self, undeepest=None, levelCheck=True):
         if(undeepest is None):
             undeepest = min((v for v in self._depth.values() if v is not None),
                             default=None)
@@ -593,8 +623,9 @@ class IlMapper:
                 return (0, 0, 255)
             elif(self._depth[aIdx] is None or self._depth[bIdx] is None):
                 return(64, 64, 255)
-            elif(self._depth[aIdx] <=0 and self._depth[bIdx] <=0 and
-                  abs(self._depth[aIdx] - self._depth[bIdx]) > 1):
+            elif(levelCheck and
+                 self._depth[aIdx] <=0 and self._depth[bIdx] <=0 and
+                 abs(self._depth[aIdx] - self._depth[bIdx]) > 1):
                 return (255, 0, 255)
             elif(self._depth[aIdx] > 0 and self._depth[bIdx] > 0 and
                   (self._downto[aIdx] == bIdx or self._downto[bIdx] == aIdx)):
@@ -667,13 +698,16 @@ if __name__ == '__main__':
     parser.add_argument('--rivermouths', type=int, metavar='mouths')
     parser.add_argument('--riverslopes', type=float, nargs='+', default=(0.01, 0.015,0.02, 0.03, 0.04))
     parser.add_argument('--riverdepth', type=float, metavar='meters', default=6)
-    parser.add_argument('--rivertaper', type=int, metavar='sections', default=2)
+    parser.add_argument('--riverwidth', type=float, metavar='meters', default=10)
+    parser.add_argument('--mouthwidth', type=float, metavar='meters', default=150)
     parser.add_argument('--landslopes', type=float, nargs='+', default=(0.05, 0.09, 0.15, 0.30, 0.75))
     parser.add_argument('--landtaper', type=int, metavar='steps', default=0)
+    parser.add_argument('--forceshore', action='store_true')
     parser.add_argument('--showshore', action='store_true')
     parser.add_argument('--showrivers', action='store_true')
     parser.add_argument('--showdownto', action='store_true')
     parser.add_argument('--showplan', action='store_true')
+    parser.add_argument('--showrelevelize', action='store_true')
     parser.add_argument('--showheight', action='store_true')
 
     args = parser.parse_args()
@@ -847,12 +881,24 @@ if __name__ == '__main__':
                                              land_slopes = args.landslopes))
         
     print("Land heightmapped")
+
+    if(args.forceshore):
+        mapper.force_one_tile_shore(view2elev)
+        print("Shoreline encouraged")
+
+    mapper.height_compress()
+    mapper.relevelize()
+    print("New levelization for new river flows")
+    if(args.showrelevelize):
+        view = PIL.Image.new('RGB', viewXY)
+        mapper.draw_grid(view, grid2view,
+                         mapper.plan_color_fn(levelCheck=False))
+        view.show()
+
     
-    mapper.force_one_tile_shore(view2elev)
-    print("Shoreline encouraged")
-    
-    mapper.punch_rivers(d=args.riverdepth, src_d=args.riverdepth/2)
-    
+    mapper.punch_rivers(d=args.riverdepth, src_d=args.riverdepth/2,
+                        minsegs=int(math.ceil(args.riverwidth/args.nodeseparation/2)),
+                        maxsegs=int(math.ceil(args.mouthwidth/args.nodeseparation/2)))
     print("Rivers punched")
     
     if(args.showheight):
