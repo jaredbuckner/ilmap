@@ -527,28 +527,46 @@ class IlMapper:
             if self._depth[pIdx] is not None:
                 self._depth[pIdx] -= minriverflow
 
-    def punch_rivers(self, d=6, src_d=6, minsegs=0, maxsegs=1):
+    def punch_rivers(self, d=6, src_d=0, minsegs=0, maxsegs=1):
         maxflow = max(v for v in self._depth.values() if v is not None)
         print(f"MAXFLOW: {maxflow}")
         riverNodes = set()
+        presumedDepth = dict()
 
         tapersegs = maxsegs - minsegs
         for segment in range(tapersegs):
             minsegflow = maxflow * (1 -  segment / tapersegs)
-            riverNodes.update(self.extend_region(riverNodes))
-            riverNodes.update(set(rIdx for rIdx, dp in self._depth.items()
-                                  if dp is not None and dp > minsegflow))
+            additions = self.extend_region(riverNodes)
+            for nIdx, path in additions.items():
+                presumedDepth[nIdx] = presumedDepth[path[0]]
+            
+            riverNodes.update(additions)
+            for rIdx, dp in self._depth.items():
+                if dp is not None and dp > minsegflow:
+                    riverNodes.add(rIdx)
+                    presumedDepth[rIdx] = dp
 
         if(minsegs > 0):
-            riverNodes.update(set(rIdx for rIdx, dp in self._depth.items()
-                                  if dp is not None and dp > 0))
-            riverNodes.update(self.extend_region(riverNodes, dist=minsegs))
+            for rIdx, dp in self._depth.items():
+                if dp is not None and dp > 0:
+                    riverNodes.add(rIdx)
+                    presumedDepth[rIdx] = dp
+
+            additions = self.extend_region(riverNodes, dist=minsegs)
+            for nIdx, path in additions.items():
+                presumedDepth[nIdx] = presumedDepth[path[0]]
+                    
+            riverNodes.update(additions)
             
         for rIdx in riverNodes:
             rHeight = self._height[rIdx]
+            rDepth = presumedDepth[rIdx]
+            assert(rDepth > 0)
             
-            self._height[rIdx] -= (d if rHeight >=0 else
-                                   (40 + rHeight) / 40 * d if rHeight >= -40 else
+            fd = (d - src_d) * (1 - (1/2)**(rDepth - 1)) + src_d
+            
+            self._height[rIdx] -= (fd if rHeight >=0 else
+                                   (40 + rHeight) / 40 * fd if rHeight >= -40 else
                                    0)
 
     def draw_heightmap(self, view, view2grid_fn):
@@ -701,7 +719,7 @@ if __name__ == '__main__':
     parser.add_argument('--riverwidth', type=float, metavar='meters', default=10)
     parser.add_argument('--mouthwidth', type=float, metavar='meters', default=150)
     parser.add_argument('--landslopes', type=float, nargs='+', default=(0.05, 0.09, 0.15, 0.30, 0.75))
-    parser.add_argument('--landtaper', type=int, metavar='steps', default=0)
+    parser.add_argument('--landtaper', type=float, metavar='meters', default=0)
     parser.add_argument('--forceshore', action='store_true')
     parser.add_argument('--showshore', action='store_true')
     parser.add_argument('--showrivers', action='store_true')
@@ -709,7 +727,8 @@ if __name__ == '__main__':
     parser.add_argument('--showplan', action='store_true')
     parser.add_argument('--showrelevelize', action='store_true')
     parser.add_argument('--showheight', action='store_true')
-
+    parser.add_argument('--output', metavar='filename', type=str)
+    
     args = parser.parse_args()
 
     grid2viewscale = (args.viewwidth / args.mapwidth,
@@ -856,7 +875,7 @@ if __name__ == '__main__':
                          vertex_color=(128,128,128))
         view.show()
 
-    mapper.levelize_land(taper=args.landtaper)
+    mapper.levelize_land(taper=int(args.landtaper / args.nodeseparation))
     print("Land levelized")
 
     if(args.showdownto):
@@ -910,4 +929,7 @@ if __name__ == '__main__':
     if(1):
         view = PIL.Image.new('I;16', (args.elevwidth, args.elevheight));
         mapper.draw_heightmap(view, view2elev)
-        view.show()
+        if(args.output is None):
+            view.show()
+        else:
+            view.save(args.output)
