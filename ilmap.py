@@ -470,8 +470,8 @@ class IlMapper:
             
         self.force_one_underwater(pointsets)
 
-    def height_compress(self, tgtmaxheight=1024-40):
-        maxheight = max(self._height.values())
+    def height_compress(self, tgtmaxheight=1024-40, regionfn=None):
+        maxheight = max(v for pIdx, v in self._height.items() if regionfn is None or regionfn(self._grid.points[pIdx]))
         if maxheight > tgtmaxheight:
             scale = tgtmaxheight / maxheight
             for pIdx, pHeight in self._height.items():
@@ -529,7 +529,6 @@ class IlMapper:
 
     def punch_rivers(self, d=6, src_d=0, minsegs=0, maxsegs=1):
         maxflow = max(v for v in self._depth.values() if v is not None)
-        print(f"MAXFLOW: {maxflow}")
         riverNodes = set()
         presumedDepth = dict()
 
@@ -905,7 +904,7 @@ if __name__ == '__main__':
         mapper.force_one_tile_shore(view2elev)
         print("Shoreline encouraged")
 
-    mapper.height_compress()
+    mapper.height_compress(regionfn=lambda p: (0 < p[0] < args.mapwidth) and (0 < p[1] < args.mapheight))
     mapper.relevelize()
     print("New levelization for new river flows")
     if(args.showrelevelize):
