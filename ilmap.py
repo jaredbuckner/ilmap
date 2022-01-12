@@ -174,16 +174,24 @@ class IlMapper:
         return(adjacents)
 
                
-    ## Call this to create rivers separated by the given grid distance
-    def create_rivers(self, dist=1, mouths=None):
-       ## Create the riverine structures
+    ## Call this to create rivers separated by the given grid distance. If
+    ## prune is given, prune river stubs which join into another rive in less
+    ## than prune steps.
+    def create_rivers(self, dist=1, mouths=None, prune=None):
+        protshore = set(self._downto)
+        if mouths is not None:
+            for count in range(dist-1):
+                protshore.update(self.extend_region(protshore))
+                                                                        
+        ## Create the riverine structures
         while(True):
             if mouths is None or mouths > 0:
                 possibilities = self.extend_region(self._downto.keys(), dist);
             else:
                 possibilities = self.extend_region((k for k, d in self._downto.items() if d is not None),
                                                    dist,
-                                                   (k for k, d in self._downto.items() if d is None))
+                                                   protshore)
+            
             if mouths is not None and mouths > 0:
                 mouths -= 1
             
@@ -196,6 +204,26 @@ class IlMapper:
                 self._downto[path[pathIdx]] = path[pathIdx-1]
                 self._depth[path[pathIdx]] = 0
 
+        if prune:
+            upto = dict()
+            for idx, tgt in self._downto.items():
+                if tgt is not None:
+                    upto.setdefault(tgt, set()).add(idx)
+
+            heads = list(idx for idx, tgt in self._downto.items() if tgt is not None and idx not in upto)
+            random.shuffle(heads)
+            for head in heads:
+                parts = [head]
+                for cnt in range(prune):
+                    npart = self._downto[parts[-1]]
+                    if npart is None or len(upto[npart]) > 1:
+                        if npart is not None:
+                            upto[npart].remove(parts[-1])
+                        for idx in parts:
+                            del self._depth[idx]
+                            del self._downto[idx]
+                        break
+                    parts.append(npart)
     
         for rIdx in self._depth.keys():
             qIdx = rIdx
@@ -712,6 +740,7 @@ if __name__ == '__main__':
     parser.add_argument('--nodeseparation', type=float, metavar='meters', default=50)
     parser.add_argument('--forbidedgefactor', type=float, default=5)
     parser.add_argument('--riverseparation', type=float, metavar='meters', default=900)
+    parser.add_argument('--riverprune', type=float, metavar='meters')
     parser.add_argument('--rivermouths', type=int, metavar='mouths')
     parser.add_argument('--riverslopes', type=float, nargs='+', default=(0.01, 0.015,0.02, 0.03, 0.04))
     parser.add_argument('--riverdepth', type=float, metavar='meters', default=6)
@@ -862,8 +891,9 @@ if __name__ == '__main__':
                          mapper.plan_color_fn(),
                          vertex_color=(128,128,128))
         view.show()
-
+        
     mapper.create_rivers(math.ceil(args.riverseparation / args.nodeseparation),
+                         prune=math.ceil(args.riverprune / args.nodeseparation) if args.riverprune else None,
                          mouths=args.rivermouths if args.rivermouths else None)
     print("Rivers are now flowing")
     
