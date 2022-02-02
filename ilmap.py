@@ -103,31 +103,35 @@ class IlMapper:
                (bIdx, aIdx) in self._forbidden_edges)
         
     ## Call one of the next three functions to set the shoreline based on grid features
-    def set_hull_shore(self):
-        self._downto = dict();
+    def set_hull_shore(self, *, initialize=True):
+        if(initialize):
+            self._downto = dict();
         for face in self._grid.convex_hull:
             for pIdx in face:
                 self._downto[pIdx] = None
         self._depth = dict(self._downto)
 
-    def set_boundary_shore(self):
-        self._downto = dict()
+    def set_boundary_shore(self, *, initialize=True):
+        if(initialize):
+            self._downto = dict()
         for triIdx, tri in enumerate(self._grid.simplices):
             if(-1 in self._grid.neighbors[triIdx]):
                 for pIdx in tri:
                     self._downto[pIdx] = None
         self._depth = dict(self._downto)
 
-    def set_radial_shore(self, *radial_select_fn_list):
-        self._downto = dict()
+    def set_radial_shore(self, *radial_select_fn_list, initialize=True):
+        if(initialize):
+            self._downto = dict()
         for pIdx, point in enumerate(self._grid.points):
             if not any(inside(point) for inside in radial_select_fn_list):
                 self._downto[pIdx] = None
 
         self._depth = dict(self._downto)
 
-    def set_koch_shore(self, pFrom, pTo, maxStep, bendFactor):
-        self._downto = dict()
+    def set_koch_shore(self, pFrom, pTo, maxStep, bendFactor, *, initialize=True):
+        if(initialize):
+            self._downto = dict()
         for kPoint in koch_path(pFrom, pTo, maxStep, bendFactor):
             smplx = self._grid.find_simplex((kPoint,))
             if smplx[0] != -1:
@@ -555,7 +559,32 @@ class IlMapper:
             if self._depth[pIdx] is not None:
                 self._depth[pIdx] -= minriverflow
 
-    def punch_rivers(self, d=6, src_d=0, minsegs=0, maxsegs=1):
+    def punch_rivers(self, d=6, src_d=0, minsegs=0, maxsegs=1, prune=None):
+        hide = set()
+        
+        if prune:
+            riverNodes = set()
+            upto = dict()
+            for idx, tgt in self._downto.items():
+                if self._depth[idx] is not None and self._depth[idx] > 0:
+                    riverNodes.add(idx);
+                    if tgt is not None:
+                        upto.setdefault(tgt, set()).add(idx)
+
+            heads = list(idx for idx in riverNodes if idx not in upto)
+            random.shuffle(heads)
+            for head in heads:
+                parts = [head]
+                for cnt in range(prune):
+                    npart = self._downto[parts[-1]]
+                    if npart is None or len(upto[npart]) > 1:
+                        if npart is not None:
+                            upto[npart].remove(parts[-1])
+                        for idx in parts:
+                            hide.add(idx)
+                        break
+                    parts.append(npart)
+        
         maxflow = max(v for v in self._depth.values() if v is not None)
         riverNodes = set()
         presumedDepth = dict()
@@ -569,13 +598,13 @@ class IlMapper:
             
             riverNodes.update(additions)
             for rIdx, dp in self._depth.items():
-                if dp is not None and dp > minsegflow:
+                if rIdx not in hide and dp is not None and dp > minsegflow:
                     riverNodes.add(rIdx)
                     presumedDepth[rIdx] = dp
 
         if(minsegs > 0):
             for rIdx, dp in self._depth.items():
-                if dp is not None and dp > 0:
+                if rIdx not in hide and dp is not None and dp > 0:
                     riverNodes.add(rIdx)
                     presumedDepth[rIdx] = dp
 
@@ -730,6 +759,7 @@ if __name__ == '__main__':
     pointsel.add_argument('--island', dest='pointsel', const='island', action='store_const')
     pointsel.add_argument('--bay', dest='pointsel', const='bay', action='store_const')
     pointsel.add_argument('--strait', dest='pointsel', const='strait', action='store_const')
+    pointsel.add_argument('--faults', dest='pointsel', const='faults', action='store_const')
     
     parser.add_argument('--mapwidth', type=float, metavar='meters', default=18000)
     parser.add_argument('--mapheight', type=float, metavar='meters', default=18000)
@@ -873,7 +903,20 @@ if __name__ == '__main__':
         pTo = (mapcenter[0] + pDel[0], mapcenter[1] + pDel[1])
         mapper.set_koch_shore(pFrom, pTo, 2 ** random.uniform(-1, 1) * args.nodeseparation,
                               random.uniform(0.2, 0.8))
-        
+
+    elif(args.pointsel == 'faults'):
+        secretradials = [make_bounded_rfn((mapninth * 4.5, mapninth * 3.5),
+                                          mapninth * 3.0, mapninth * 3.5),
+                         make_bounded_rfn((mapninth * 4.5, mapninth * -1),
+                                          mapninth * 6.0, mapninth * 7.0)]
+        mapper.set_radial_shore(*secretradials)
+
+        for riftidx in range(6):
+            riftFrom = (mapninth * (11 * riftidx / 5 - 1), mapninth * 10)
+            riftTo   = (mapninth * (riftidx + random.uniform(1.5, 2.5)), mapninth * random.uniform(4, 6))
+            mapper.set_koch_shore(riftFrom, riftTo, 2 ** random.uniform(-1, 1) * args.nodeseparation,
+                                  random.uniform(0.01, 0.2), initialize=False)
+    
     else:
         radials.append(make_bounded_rfn(mapcenter,
                                         args.mapwidth * 1.5 / 9,
@@ -893,7 +936,7 @@ if __name__ == '__main__':
         view.show()
         
     mapper.create_rivers(math.ceil(args.riverseparation / args.nodeseparation),
-                         prune=math.ceil(args.riverprune / args.nodeseparation) if args.riverprune else None,
+                         ## prune=math.ceil(args.riverprune / args.nodeseparation) if args.riverprune else None,
                          mouths=args.rivermouths if args.rivermouths else None)
     print("Rivers are now flowing")
     
@@ -946,7 +989,8 @@ if __name__ == '__main__':
     
     mapper.punch_rivers(d=args.riverdepth, src_d=args.riverdepth/2,
                         minsegs=int(math.ceil(args.riverwidth/args.nodeseparation/2)),
-                        maxsegs=int(math.ceil(args.mouthwidth/args.nodeseparation/2)))
+                        maxsegs=int(math.ceil(args.mouthwidth/args.nodeseparation/2)),
+                        prune=math.ceil(args.riverprune / args.nodeseparation) if args.riverprune else None)
     print("Rivers punched")
     
     if(args.showheight):
