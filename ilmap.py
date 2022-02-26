@@ -7,6 +7,20 @@ import random
 from scipy.spatial import Delaunay
 import unittest
 
+def pickint(s):
+    pieces = tuple(s.split(':', 2));
+    if(len(pieces) == 2):
+        return(random.randint(int(pieces[0]), int(pieces[1])))
+    else:
+        return(int(s))
+
+def pickfloat(s):
+    pieces = tuple(s.split(':', 2));
+    if(len(pieces) == 2):
+        return(random.uniform(float(pieces[0]), float(pieces[1])))
+    else:
+        return(float(s))
+
 def rand_sum_to_n(summa, elements):
     for pick in range(elements-1, -1, -1):
         if pick==0:
@@ -769,15 +783,15 @@ if __name__ == '__main__':
     parser.add_argument('--elevheight', type=int, metavar='pixels', default=1081)
     parser.add_argument('--nodeseparation', type=float, metavar='meters', default=50)
     parser.add_argument('--forbidedgefactor', type=float, default=5)
-    parser.add_argument('--riverseparation', type=float, metavar='meters', default=900)
-    parser.add_argument('--riverprune', type=float, metavar='meters')
-    parser.add_argument('--rivermouths', type=int, metavar='mouths')
-    parser.add_argument('--riverslopes', type=float, nargs='+', default=(0.01, 0.015,0.02, 0.03, 0.04))
-    parser.add_argument('--riverdepth', type=float, metavar='meters', default=6)
-    parser.add_argument('--riverwidth', type=float, metavar='meters', default=10)
-    parser.add_argument('--mouthwidth', type=float, metavar='meters', default=150)
-    parser.add_argument('--landslopes', type=float, nargs='+', default=(0.05, 0.09, 0.15, 0.30, 0.75))
-    parser.add_argument('--landtaper', type=float, metavar='meters', default=0)
+    parser.add_argument('--riverseparation', type=pickfloat, metavar='meters', default=900)
+    parser.add_argument('--riverprune', type=pickfloat, metavar='meters')
+    parser.add_argument('--rivermouths', type=pickint, metavar='mouths')
+    parser.add_argument('--riverslopes', type=pickfloat, nargs='+', default=(0.01, 0.015,0.02, 0.03, 0.04))
+    parser.add_argument('--riverdepth', type=pickfloat, metavar='meters', default=6)
+    parser.add_argument('--riverwidth', type=pickfloat, metavar='meters', default=10)
+    parser.add_argument('--mouthwidth', type=pickfloat, metavar='meters', default=150)
+    parser.add_argument('--landslopes', type=pickfloat, nargs='+', default=(0.05, 0.09, 0.15, 0.30, 0.75))
+    parser.add_argument('--landtaper', type=pickfloat, metavar='meters', default=0)
     parser.add_argument('--forceshore', action='store_true')
     parser.add_argument('--showshore', action='store_true')
     parser.add_argument('--showrivers', action='store_true')
@@ -789,6 +803,8 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
 
+    print(repr(args))
+    
     grid2viewscale = (args.viewwidth / args.mapwidth,
                       args.viewheight / args.mapheight)
     def grid2view(point):
